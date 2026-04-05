@@ -211,6 +211,15 @@ const Call = () => {
     });
 
     ringtoneRef.current.pause();
+    
+    // ✅ Fix: Populate selectedUser from incomingCall so UI doesn't think session is empty
+    const acceptedUser = {
+      _id: incomingCall.from,
+      name: incomingCall.callerName
+    };
+    setSelectedUserState(acceptedUser);
+    sessionStorage.setItem("call_user", JSON.stringify(acceptedUser));
+
     setCallAccepted(true);
     setIncomingCall(null);
   }, [startMedia, incomingCall]);
@@ -358,7 +367,7 @@ const Call = () => {
   }, [endCall, userInfo?._id, location.state?.autoCall, callAccepted, incomingCall, callUser]);
 
   // ❗ DASHBOARD / ERROR UI (POLISHED)
-  if (!selectedUser && !incomingCall) {
+  if (!selectedUser && !incomingCall && !callAccepted) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#020617] text-white font-display overflow-hidden relative">
         {/* Decorative Background Elements */}
