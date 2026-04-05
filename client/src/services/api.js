@@ -1,3 +1,5 @@
+import axios from "axios";
+
 const getBaseURL = () => {
   const url = process.env.REACT_APP_API_URL || "https://skill-swap-vuhy.onrender.com/api";
   return url.endsWith("/api") ? url : `${url}/api`;
