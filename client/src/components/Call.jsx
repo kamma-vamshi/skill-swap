@@ -34,6 +34,9 @@ const Call = () => {
 
   const [stream, setStream] = useState(null);
   const [callAccepted, setCallAccepted] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("idle"); // idle, connecting, connected, failed
+  
+  const iceQueue = useRef([]);
 
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -116,6 +119,13 @@ const Call = () => {
     const media = await startMedia();
 
     peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+    setConnectionStatus("connecting");
+
+    peerConnection.current.oniceconnectionstatechange = () => {
+      const state = peerConnection.current.iceConnectionState;
+      if (state === "connected" || state === "completed") setConnectionStatus("connected");
+      if (state === "failed") setConnectionStatus("failed");
+    };
 
     media.getTracks().forEach((track) => {
       peerConnection.current.addTrack(track, media);
@@ -147,11 +157,7 @@ const Call = () => {
     });
     ringbackRef.current.play().catch(e => console.log("Ringback blocked"));
 
-    socket.on("callAccepted", async ({ answer }) => {
-      ringbackRef.current.pause();
-      setCallAccepted(true);
-      await peerConnection.current.setRemoteDescription(answer);
-    });
+    // Listener for acceptance moved to global useEffect for robustness
   }, [startMedia, userInfo?._id, userInfo?.name, selectedUser?._id]);
 
   // ✅ ACCEPT CALL
@@ -159,6 +165,13 @@ const Call = () => {
     const media = await startMedia();
 
     peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+    setConnectionStatus("connecting");
+
+    peerConnection.current.oniceconnectionstatechange = () => {
+      const state = peerConnection.current.iceConnectionState;
+      if (state === "connected" || state === "completed") setConnectionStatus("connected");
+      if (state === "failed") setConnectionStatus("failed");
+    };
 
     media.getTracks().forEach((track) => {
       peerConnection.current.addTrack(track, media);
@@ -180,8 +193,14 @@ const Call = () => {
     };
 
     await peerConnection.current.setRemoteDescription(
-      incomingCall.offer
+      new RTCSessionDescription(incomingCall.offer)
     );
+
+    // Process any queued candidates that arrived before PC was ready
+    while (iceQueue.current.length > 0) {
+      const cand = iceQueue.current.shift();
+      await peerConnection.current.addIceCandidate(new RTCIceCandidate(cand));
+    }
 
     const answer = await peerConnection.current.createAnswer();
     await peerConnection.current.setLocalDescription(answer);
@@ -293,7 +312,29 @@ const Call = () => {
     });
 
     socket.on("iceCandidate", async ({ candidate }) => {
-      await peerConnection.current?.addIceCandidate(candidate);
+      if (peerConnection.current && peerConnection.current.remoteDescription) {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        iceQueue.current.push(candidate);
+      }
+    });
+
+    socket.on("callAccepted", async ({ answer }) => {
+      ringbackRef.current.pause();
+      setCallAccepted(true);
+      if (peerConnection.current) {
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
+        // Process queued ice candidates
+        while (iceQueue.current.length > 0) {
+          const cand = iceQueue.current.shift();
+          await peerConnection.current.addIceCandidate(new RTCIceCandidate(cand));
+        }
+      }
+    });
+
+    socket.on("callRejected", () => {
+      alert("Call was rejected");
+      endCall();
     });
 
     socket.on("callEnded", endCall);
@@ -307,7 +348,13 @@ const Call = () => {
       sessionStorage.removeItem("auto_call");
     }
 
-    return () => socket.off();
+    return () => {
+      socket.off("incomingCall");
+      socket.off("iceCandidate");
+      socket.off("callAccepted");
+      socket.off("callRejected");
+      socket.off("callEnded");
+    };
   }, [endCall, userInfo?._id, location.state?.autoCall, callAccepted, incomingCall, callUser]);
 
   // ❗ DASHBOARD / ERROR UI (POLISHED)
@@ -382,24 +429,51 @@ const Call = () => {
         </div>
       </motion.div>
 
-      {/* 🛑 RECORDING INDICATOR */}
-      <AnimatePresence>
-        {recording && (
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="absolute top-8 left-8 z-50 flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-xl backdrop-blur-md"
-          >
+      {/* 🛑 RECORDING INDICATOR & CONNECTION STATUS */}
+      <div className="absolute top-8 left-8 z-50 flex flex-col gap-3">
+        <AnimatePresence>
+          {recording && (
             <motion.div 
-              animate={{ opacity: [1, 0.4, 1] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]"
-            />
-            <span className="text-[10px] font-black uppercase tracking-widest text-red-500">Rec</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-xl backdrop-blur-md"
+            >
+              <motion.div 
+                animate={{ opacity: [1, 0.4, 1] }}
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]"
+              />
+              <span className="text-[10px] font-black uppercase tracking-widest text-red-500">Rec</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {connectionStatus !== 'idle' && (
+            <motion.div 
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-md border ${
+                connectionStatus === 'connected' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                connectionStatus === 'failed' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+                'bg-white/5 border-white/10 text-gray-400'
+              }`}
+            >
+              <div className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
+                connectionStatus === 'failed' ? 'bg-red-500' :
+                'bg-yellow-500 animate-bounce'
+              }`} />
+              <span className="text-[10px] font-black uppercase tracking-widest">
+                {connectionStatus === 'connected' ? 'Secure Connected' :
+                 connectionStatus === 'failed' ? 'Connection Failed' :
+                 'Establishing Link...'}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* ⏳ PRE-CALL / CONNECTING OVERLAY */}
       {!callAccepted && !incomingCall && (
