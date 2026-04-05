@@ -17,6 +17,18 @@ const ICE_SERVERS = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
+// ⚡ SDP MANGLING FOR HIGH QUALITY
+const setMediaBitrates = (sdp) => {
+  let newSdp = sdp;
+  // Audio: Boost Opus bitrate to 128kbps (high fidelity)
+  newSdp = newSdp.replace(/a=fmtp:111 (.*)/g, "a=fmtp:111 $1;maxaveragebitrate=128000;stereo=1;useinbandfec=1");
+  // Video: Force higher bandwidth (2500kbps for HD)
+  if (newSdp.indexOf("b=AS:") === -1) {
+    newSdp = newSdp.replace(/m=video (.*)\r\n/g, `m=video $1\r\nb=AS:2500\r\n`);
+  }
+  return newSdp;
+};
+
 const Call = () => {
   const { userInfo } = useAuth();
   const location = useLocation();
@@ -74,11 +86,17 @@ const Call = () => {
   // 🎥 START MEDIA
   const startMedia = useCallback(async () => {
     const mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      },
       audio: {
-        noiseSuppression: true,
         echoCancellation: true,
+        noiseSuppression: true,
         autoGainControl: true,
+        channelCount: 2,
+        sampleRate: 48000
       },
     });
 
@@ -147,13 +165,18 @@ const Call = () => {
     };
 
     const offer = await peerConnection.current.createOffer();
-    await peerConnection.current.setLocalDescription(offer);
+    // 🚀 Apply High-Quality Bitrates
+    const hqOffer = new RTCSessionDescription({
+      type: 'offer',
+      sdp: setMediaBitrates(offer.sdp)
+    });
+    await peerConnection.current.setLocalDescription(hqOffer);
 
     socket.emit("callUser", {
       to: selectedUser._id,
       from: userInfo._id,
       callerName: userInfo.name,
-      offer,
+      offer: hqOffer, // Send mangled offer
     });
     ringbackRef.current.play().catch(e => console.log("Ringback blocked"));
 
@@ -203,11 +226,16 @@ const Call = () => {
     }
 
     const answer = await peerConnection.current.createAnswer();
-    await peerConnection.current.setLocalDescription(answer);
+    // 🚀 Apply High-Quality Bitrates
+    const hqAnswer = new RTCSessionDescription({
+      type: 'answer',
+      sdp: setMediaBitrates(answer.sdp)
+    });
+    await peerConnection.current.setLocalDescription(hqAnswer);
 
     socket.emit("acceptCall", {
       to: incomingCall.from,
-      answer,
+      answer: hqAnswer, // Send mangled answer
     });
 
     ringtoneRef.current.pause();
