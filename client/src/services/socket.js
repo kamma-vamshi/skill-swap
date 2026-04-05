@@ -9,9 +9,9 @@ const getSocketURL = () => {
         return process.env.REACT_APP_API_URL.replace(/\/api$/, "");
     }
 
-    return "http://localhost:5000";
+    return "https://skill-swap-vuhy.onrender.com";
 };
 
 const socket = io(getSocketURL());
 
-export default socket;
+export default socket;
