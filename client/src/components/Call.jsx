@@ -22,8 +22,9 @@ const Call = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const selectedUser = location.state?.selectedUser;
-  const initialIncomingCall = location.state?.incomingCallData || null;
+  // 🔥 STATE & PERSISTENCE
+  const [selectedUser, setSelectedUserState] = useState(location.state?.selectedUser || JSON.parse(sessionStorage.getItem("call_user")));
+  const [incomingCall, setIncomingCall] = useState(location.state?.incomingCallData || JSON.parse(sessionStorage.getItem("incoming_call")) || null);
 
   const localVideo = useRef();
   const remoteVideo = useRef();
@@ -33,7 +34,6 @@ const Call = () => {
 
   const [stream, setStream] = useState(null);
   const [callAccepted, setCallAccepted] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(initialIncomingCall);
 
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -54,6 +54,19 @@ const Call = () => {
       ringback.pause();
     };
   }, []);
+
+  // 💾 PERSIST CALL DATA
+  useEffect(() => {
+    if (location.state?.selectedUser) {
+      sessionStorage.setItem("call_user", JSON.stringify(location.state.selectedUser));
+    }
+    if (location.state?.incomingCallData) {
+      sessionStorage.setItem("incoming_call", JSON.stringify(location.state.incomingCallData));
+    }
+    if (location.state?.autoCall) {
+      sessionStorage.setItem("auto_call", "true");
+    }
+  }, [location.state]);
 
   // 🎥 START MEDIA
   const startMedia = useCallback(async () => {
@@ -83,6 +96,12 @@ const Call = () => {
     ringbackRef.current.pause();
     setCallAccepted(false);
     setIncomingCall(null);
+    setSelectedUserState(null);
+
+    // 🧹 Clear Persistence
+    sessionStorage.removeItem("call_user");
+    sessionStorage.removeItem("incoming_call");
+    sessionStorage.removeItem("auto_call");
 
     if (selectedUser?._id) {
       socket.emit("endCall", { to: selectedUser._id });
@@ -280,19 +299,45 @@ const Call = () => {
     socket.on("callEnded", endCall);
 
     // ✨ AUTO-CALL FEATURE (WITH GUARD)
-    if (location.state?.autoCall && !callAccepted && !incomingCall && !hasCalled.current) {
+    const shouldAutoCall = location.state?.autoCall || sessionStorage.getItem("auto_call") === "true";
+    if (shouldAutoCall && !callAccepted && !incomingCall && !hasCalled.current) {
       hasCalled.current = true;
       callUser();
+      // Only auto-call once per session
+      sessionStorage.removeItem("auto_call");
     }
 
     return () => socket.off();
   }, [endCall, userInfo?._id, location.state?.autoCall, callAccepted, incomingCall, callUser]);
 
-  // ❗ NOW SAFE TO CHECK
+  // ❗ DASHBOARD / ERROR UI (POLISHED)
   if (!selectedUser && !incomingCall) {
     return (
-      <div className="h-screen flex items-center justify-center text-white bg-black">
-        No user selected for call
+      <div className="h-screen flex items-center justify-center bg-[#020617] text-white font-display overflow-hidden relative">
+        {/* Decorative Background Elements */}
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-600/10 blur-[120px] rounded-full pointer-events-none" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-pink-600/10 blur-[120px] rounded-full pointer-events-none" />
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center relative z-10 glass p-12 rounded-[4rem] border border-white/5 shadow-2xl max-w-md w-full mx-4"
+        >
+          <div className="w-24 h-24 bg-white/5 rounded-3xl mx-auto mb-8 flex items-center justify-center text-gray-400 border border-white/5">
+             <FiVideoOff size={40} />
+          </div>
+          <h2 className="text-3xl font-bold mb-4 tracking-tight">No Active Session</h2>
+          <p className="text-gray-400 mb-10 leading-relaxed">
+            We couldn't find an active call request. Please start a call from your contacts list.
+          </p>
+          <button 
+            onClick={() => navigate("/chat")}
+            className="btn primary w-full py-4 rounded-2xl shadow-purple-500/20 flex items-center justify-center gap-3 group"
+          >
+            <FiPhone size={20} className="group-hover:rotate-12 transition-transform" />
+            Go to Messenger
+          </button>
+        </motion.div>
       </div>
     );
   }
