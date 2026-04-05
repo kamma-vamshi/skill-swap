@@ -14,16 +14,23 @@ import {
 } from "react-icons/fi";
 
 const ICE_SERVERS = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun.services.mozilla.com" },
+  ],
 };
 
-// ⚡ SDP MANGLING FOR HIGH QUALITY
+// ⚡ SDP MANGLING FOR HIGH QUALITY (Made safer)
 const setMediaBitrates = (sdp) => {
   let newSdp = sdp;
   // Audio: Boost Opus bitrate to 128kbps (high fidelity)
-  newSdp = newSdp.replace(/a=fmtp:111 (.*)/g, "a=fmtp:111 $1;maxaveragebitrate=128000;stereo=1;useinbandfec=1");
+  if (newSdp.includes("a=mid:audio")) {
+    newSdp = newSdp.replace(/a=fmtp:111 (.*)/g, "a=fmtp:111 $1;maxaveragebitrate=128000;stereo=1;useinbandfec=1");
+  }
   // Video: Force higher bandwidth (2500kbps for HD)
-  if (newSdp.indexOf("b=AS:") === -1) {
+  if (newSdp.includes("m=video") && !newSdp.includes("b=AS:")) {
     newSdp = newSdp.replace(/m=video (.*)\r\n/g, `m=video $1\r\nb=AS:2500\r\n`);
   }
   return newSdp;
@@ -57,7 +64,7 @@ const Call = () => {
   
   // 🎵 AUDIO
   const ringtoneRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_73145465e9.mp3"));
-  const ringbackRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/10/audio_c36395e86d.mp3")); // Using a ping for now or similar loopable
+  const ringbackRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/10/audio_c36395e86d.mp3")); 
   
   useEffect(() => {
     const ringtone = ringtoneRef.current;
@@ -85,39 +92,48 @@ const Call = () => {
 
   // 🎥 START MEDIA
   const startMedia = useCallback(async () => {
-    const mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 }
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 2,
-        sampleRate: 48000
-      },
-    });
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 }
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 2,
+          sampleRate: 48000
+        },
+      });
 
-    setStream(mediaStream);
-    if (localVideo.current) {
-      localVideo.current.srcObject = mediaStream;
+      setStream(mediaStream);
+      if (localVideo.current) {
+        localVideo.current.srcObject = mediaStream;
+      }
+      return mediaStream;
+    } catch (err) {
+      console.error("Media error:", err);
+      alert("Failed to access camera/microphone. Please check permissions.");
+      return null;
     }
-
-    return mediaStream;
   }, []);
 
   // ❌ END CALL (SAFE)
   const endCall = useCallback(() => {
     peerConnection.current?.close();
+    peerConnection.current = null;
+    
     stream?.getTracks().forEach((t) => t.stop());
+    setStream(null);
 
     ringtoneRef.current.pause();
     ringbackRef.current.pause();
     setCallAccepted(false);
     setIncomingCall(null);
     setSelectedUserState(null);
+    setConnectionStatus("idle");
 
     // 🧹 Clear Persistence
     sessionStorage.removeItem("call_user");
@@ -128,19 +144,44 @@ const Call = () => {
       socket.emit("endCall", { to: selectedUser._id });
     }
     
-    // Redirect back to chat page
     navigate("/chat");
   }, [stream, selectedUser, navigate]);
+
+  // ❄️ ICE HELPER
+  const addIceCandidate = async (candidate) => {
+    try {
+      if (peerConnection.current && peerConnection.current.remoteDescription) {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        iceQueue.current.push(candidate);
+      }
+    } catch (e) {
+      console.warn("Failed to add ICE candidate", e);
+    }
+  };
+
+  const flushIceQueue = async () => {
+    while (iceQueue.current.length > 0) {
+      const cand = iceQueue.current.shift();
+      try {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (e) {
+        console.warn("Error flushing ICE candidate", e);
+      }
+    }
+  };
 
   // 📞 CALL USER
   const callUser = useCallback(async () => {
     const media = await startMedia();
+    if (!media) return;
 
     peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
     setConnectionStatus("connecting");
 
     peerConnection.current.oniceconnectionstatechange = () => {
       const state = peerConnection.current.iceConnectionState;
+      console.log("ICE Connection State:", state);
       if (state === "connected" || state === "completed") setConnectionStatus("connected");
       if (state === "failed") setConnectionStatus("failed");
     };
@@ -165,7 +206,6 @@ const Call = () => {
     };
 
     const offer = await peerConnection.current.createOffer();
-    // 🚀 Apply High-Quality Bitrates
     const hqOffer = new RTCSessionDescription({
       type: 'offer',
       sdp: setMediaBitrates(offer.sdp)
@@ -176,16 +216,16 @@ const Call = () => {
       to: selectedUser._id,
       from: userInfo._id,
       callerName: userInfo.name,
-      offer: hqOffer, // Send mangled offer
+      offer: hqOffer, 
     });
     ringbackRef.current.play().catch(e => console.log("Ringback blocked"));
 
-    // Listener for acceptance moved to global useEffect for robustness
   }, [startMedia, userInfo?._id, userInfo?.name, selectedUser?._id]);
 
   // ✅ ACCEPT CALL
   const acceptCall = useCallback(async () => {
     const media = await startMedia();
+    if (!media) return;
 
     peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
     setConnectionStatus("connecting");
@@ -219,14 +259,10 @@ const Call = () => {
       new RTCSessionDescription(incomingCall.offer)
     );
 
-    // Process any queued candidates that arrived before PC was ready
-    while (iceQueue.current.length > 0) {
-      const cand = iceQueue.current.shift();
-      await peerConnection.current.addIceCandidate(new RTCIceCandidate(cand));
-    }
+    // Process queued candidates
+    await flushIceQueue();
 
     const answer = await peerConnection.current.createAnswer();
-    // 🚀 Apply High-Quality Bitrates
     const hqAnswer = new RTCSessionDescription({
       type: 'answer',
       sdp: setMediaBitrates(answer.sdp)
@@ -235,12 +271,11 @@ const Call = () => {
 
     socket.emit("acceptCall", {
       to: incomingCall.from,
-      answer: hqAnswer, // Send mangled answer
+      answer: hqAnswer, 
     });
 
     ringtoneRef.current.pause();
     
-    // ✅ Fix: Populate selectedUser from incomingCall so UI doesn't think session is empty
     const acceptedUser = {
       _id: incomingCall.from,
       name: incomingCall.callerName
@@ -252,7 +287,7 @@ const Call = () => {
     setIncomingCall(null);
   }, [startMedia, incomingCall]);
 
-  // 🎤 MIC
+  // 🎤 MIC / CAMERA
   const toggleMic = () => {
     if (!stream) return;
     const audioTrack = stream.getAudioTracks()[0];
@@ -262,13 +297,12 @@ const Call = () => {
     }
   };
 
-  // 📷 CAMERA
   const toggleCam = () => {
     if (!stream) return;
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
-      videoTrack.enabled = !videoTrack.enabled;
-      setCamOn(videoTrack.enabled);
+      videoTrack.enabled = !camOn;
+      setCamOn(!camOn);
     }
   };
 
@@ -277,14 +311,9 @@ const Call = () => {
     if (!peerConnection.current || !stream) return;
 
     try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-      });
-
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const screenTrack = screenStream.getTracks()[0];
-      const videoSender = peerConnection.current
-        .getSenders()
-        .find((s) => s.track?.kind === "video");
+      const videoSender = peerConnection.current.getSenders().find((s) => s.track?.kind === "video");
 
       if (videoSender) {
         videoSender.replaceTrack(screenTrack);
@@ -303,7 +332,6 @@ const Call = () => {
 
   // 🔴 RECORD
   const startRecording = () => {
-    // Record the remote stream if call is accepted, otherwise local
     const streamToRecord = remoteVideo.current?.srcObject || stream;
     if (!streamToRecord) return;
 
@@ -334,71 +362,65 @@ const Call = () => {
     setRecording(false);
   };
 
-  // ================= DRAG PIP (OPTIONAL) =================
-  // PIP is already draggable using framer-motion in the return logic
-
   // 📞 SOCKET EVENTS
   useEffect(() => {
-    if (userInfo?._id) {
-      socket.emit("join", userInfo._id);
-    }
+    if (!userInfo?._id) return;
+    
+    socket.emit("join", userInfo._id);
 
-    socket.on("incomingCall", ({ from, callerName, offer }) => {
+    const handleIncomingCall = ({ from, callerName, offer }) => {
       setIncomingCall({ from, callerName, offer });
       ringtoneRef.current.play().catch(e => console.log("Ringtone blocked"));
-    });
+    };
 
-    socket.on("iceCandidate", async ({ candidate }) => {
-      if (peerConnection.current && peerConnection.current.remoteDescription) {
-        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
-      } else {
-        iceQueue.current.push(candidate);
-      }
-    });
-
-    socket.on("callAccepted", async ({ answer }) => {
+    const handleCallAccepted = async ({ answer }) => {
       ringbackRef.current.pause();
       setCallAccepted(true);
       if (peerConnection.current) {
         await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
-        // Process queued ice candidates
-        while (iceQueue.current.length > 0) {
-          const cand = iceQueue.current.shift();
-          await peerConnection.current.addIceCandidate(new RTCIceCandidate(cand));
-        }
+        await flushIceQueue();
       }
-    });
+    };
 
-    socket.on("callRejected", () => {
+    const handleIceCandidate = ({ candidate }) => {
+      addIceCandidate(candidate);
+    };
+
+    const handleCallRejected = () => {
       alert("Call was rejected");
       endCall();
-    });
+    };
 
-    socket.on("callEnded", endCall);
+    const handleCallEnded = () => {
+      endCall();
+    };
 
-    // ✨ AUTO-CALL FEATURE (WITH GUARD)
+    socket.on("incomingCall", handleIncomingCall);
+    socket.on("callAccepted", handleCallAccepted);
+    socket.on("iceCandidate", handleIceCandidate);
+    socket.on("callRejected", handleCallRejected);
+    socket.on("callEnded", handleCallEnded);
+
+    // ✨ AUTO-CALL FEATURE
     const shouldAutoCall = location.state?.autoCall || sessionStorage.getItem("auto_call") === "true";
-    if (shouldAutoCall && !callAccepted && !incomingCall && !hasCalled.current) {
+    if (shouldAutoCall && !callAccepted && !incomingCall && !hasCalled.current && selectedUser) {
       hasCalled.current = true;
       callUser();
-      // Only auto-call once per session
       sessionStorage.removeItem("auto_call");
     }
 
     return () => {
-      socket.off("incomingCall");
-      socket.off("iceCandidate");
-      socket.off("callAccepted");
-      socket.off("callRejected");
-      socket.off("callEnded");
+      socket.off("incomingCall", handleIncomingCall);
+      socket.off("callAccepted", handleCallAccepted);
+      socket.off("iceCandidate", handleIceCandidate);
+      socket.off("callRejected", handleCallRejected);
+      socket.off("callEnded", handleCallEnded);
     };
-  }, [endCall, userInfo?._id, location.state?.autoCall, callAccepted, incomingCall, callUser]);
+  }, [userInfo?._id, selectedUser, callUser, endCall, callAccepted, incomingCall, location.state?.autoCall]);
 
-  // ❗ DASHBOARD / ERROR UI (POLISHED)
   if (!selectedUser && !incomingCall && !callAccepted) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#020617] text-white font-display overflow-hidden relative">
-        {/* Decorative Background Elements */}
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-600/10 blur-[120px] rounded-full pointer-events-none" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-pink-600/10 blur-[120px] rounded-full pointer-events-none" />
 
@@ -431,18 +453,18 @@ const Call = () => {
   return (
     <div className="fixed inset-0 bg-[#020617] flex flex-col overflow-hidden font-display text-white">
       
-      {/* 🔴 REMOTE VIDEO (IMMERSIVE BACKGROUND) */}
+      {/* 🔴 REMOTE VIDEO */}
       <div className="absolute inset-0 z-0">
         <video 
           ref={remoteVideo} 
           autoPlay 
+          playsInline
           className={`w-full h-full object-cover transition-opacity duration-700 ${callAccepted ? 'opacity-100' : 'opacity-40'}`} 
         />
-        {/* Subtle Overlay to make UI text readable */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60 pointer-events-none" />
       </div>
 
-      {/* 🟢 LOCAL VIDEO (PICTURE-IN-PICTURE) */}
+      {/* 🟢 LOCAL VIDEO */}
       <motion.div 
         drag
         dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
@@ -454,6 +476,7 @@ const Call = () => {
           ref={localVideo}
           autoPlay
           muted
+          playsInline
           className={`w-full h-full object-cover transition-opacity ${camOn ? 'opacity-100' : 'opacity-20'}`}
         />
         {!camOn && (
@@ -466,60 +489,43 @@ const Call = () => {
         </div>
       </motion.div>
 
-      {/* 🛑 RECORDING INDICATOR & CONNECTION STATUS */}
+      {/* 🛑 INDICATORS */}
       <div className="absolute top-8 left-8 z-50 flex flex-col gap-3">
         <AnimatePresence>
           {recording && (
             <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
               className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-xl backdrop-blur-md"
             >
-              <motion.div 
-                animate={{ opacity: [1, 0.4, 1] }}
-                transition={{ repeat: Infinity, duration: 1.5 }}
-                className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]"
-              />
+              <motion.div animate={{ opacity: [1, 0.4, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-red-500">Rec</span>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <AnimatePresence>
-          {connectionStatus !== 'idle' && (
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-md border ${
-                connectionStatus === 'connected' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
-                connectionStatus === 'failed' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
-                'bg-white/5 border-white/10 text-gray-400'
-              }`}
-            >
-              <div className={`w-2 h-2 rounded-full ${
-                connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
-                connectionStatus === 'failed' ? 'bg-red-500' :
-                'bg-yellow-500 animate-bounce'
-              }`} />
-              <span className="text-[10px] font-black uppercase tracking-widest">
-                {connectionStatus === 'connected' ? 'Secure Connected' :
-                 connectionStatus === 'failed' ? 'Connection Failed' :
-                 'Establishing Link...'}
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-md border ${
+            connectionStatus === 'connected' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+            connectionStatus === 'failed' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+            'bg-white/5 border-white/10 text-gray-400'
+          }`}
+        >
+          <div className={`w-2 h-2 rounded-full ${
+            connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
+            connectionStatus === 'failed' ? 'bg-red-500' : 'bg-yellow-500 animate-bounce'
+          }`} />
+          <span className="text-[10px] font-black uppercase tracking-widest">
+            {connectionStatus === 'connected' ? 'Secure Connected' :
+             connectionStatus === 'failed' ? 'Connection Failed' : 'Establishing Link...'}
+          </span>
+        </motion.div>
       </div>
 
-      {/* ⏳ PRE-CALL / CONNECTING OVERLAY */}
+      {/* ⏳ PRE-CALL OVERLAY */}
       {!callAccepted && !incomingCall && (
         <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-xl flex items-center justify-center">
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center"
-          >
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center">
             <div className="relative mb-8 flex justify-center">
               <div className="w-32 h-32 bg-gradient-to-br from-purple-500 to-pink-500 rounded-[2.5rem] flex items-center justify-center text-5xl font-bold border-4 border-white/10 shadow-2xl animate-pulse">
                 {displayName[0]}
@@ -530,37 +536,22 @@ const Call = () => {
             </div>
             <h2 className="text-3xl font-bold mb-2">Connecting to {displayName}</h2>
             <p className="text-purple-400 font-medium tracking-wide animate-pulse uppercase text-xs">Waiting for carrier response...</p>
-            
-            {!hasCalled.current && (
-              <button onClick={callUser} className="btn primary px-10 py-4 mt-8 rounded-2xl shadow-purple-500/20">
-                Start Call Now
-              </button>
-            )}
           </motion.div>
         </div>
       )}
 
-      {/* 📥 INCOMING CALL OVERLAY */}
+      {/* 📥 INCOMING OVERLAY */}
       {incomingCall && (
         <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-2xl flex items-center justify-center">
-          <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="glass p-12 rounded-[3.5rem] border border-white/10 shadow-2xl w-full max-w-sm text-center"
-          >
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass p-12 rounded-[3.5rem] border border-white/10 shadow-2xl w-full max-w-sm text-center">
             <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-500 rounded-[2rem] mx-auto mb-8 flex items-center justify-center text-4xl font-bold shadow-2xl animate-pulse">
               {displayName[0]}
             </div>
             <h2 className="text-3xl font-bold mb-2">Incoming Call</h2>
             <p className="text-gray-400 mb-10 font-medium">{displayName} is calling you...</p>
-
             <div className="flex flex-col gap-4">
-              <button onClick={acceptCall} className="btn primary py-5 text-lg rounded-2xl shadow-green-500/20">
-                Accept Call
-              </button>
-              <button onClick={endCall} className="btn outline border-red-500/20 text-red-400 hover:bg-red-500/10 py-4 rounded-2xl">
-                Decline
-              </button>
+              <button onClick={acceptCall} className="btn primary py-5 text-lg rounded-2xl shadow-green-500/20">Accept Call</button>
+              <button onClick={endCall} className="btn outline border-red-500/20 text-red-400 hover:bg-red-500/10 py-4 rounded-2xl">Decline</button>
             </div>
           </motion.div>
         </div>
@@ -568,57 +559,28 @@ const Call = () => {
 
       {/* 🎮 FLOATING CONTROL BAR */}
       <motion.div 
-        initial={{ y: 100 }}
-        animate={{ y: 0 }}
+        initial={{ y: 100 }} animate={{ y: 0 }}
         className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-6 py-4 glass rounded-[2.5rem] border border-white/10 shadow-2xl"
       >
         <div className="flex items-center gap-2 pr-4 border-r border-white/10 mr-2">
-          <button 
-            onClick={toggleMic} 
-            className={`p-4 rounded-2xl transition-all duration-300 ${micOn ? 'glass hover:bg-white/10' : 'bg-red-500/20 text-red-500 border border-red-500/20 hover:bg-red-500/30'}`}
-          >
+          <button onClick={toggleMic} className={`p-4 rounded-2xl transition-all ${micOn ? 'glass hover:bg-white/10' : 'bg-red-500/20 text-red-500 border border-red-500/20'}`}>
             {micOn ? <FiMic size={20} /> : <FiMicOff size={20} />}
           </button>
-          <button 
-            onClick={toggleCam} 
-            className={`p-4 rounded-2xl transition-all duration-300 ${camOn ? 'glass hover:bg-white/10' : 'bg-red-500/20 text-red-500 border border-red-500/20 hover:bg-red-500/30'}`}
-          >
+          <button onClick={toggleCam} className={`p-4 rounded-2xl transition-all ${camOn ? 'glass hover:bg-white/10' : 'bg-red-500/20 text-red-500 border border-red-500/20'}`}>
             {camOn ? <FiVideo size={20} /> : <FiVideoOff size={20} />}
           </button>
         </div>
 
-        <button 
-          onClick={shareScreen} 
-          className="p-4 rounded-2xl glass hover:bg-white/10 transition-colors"
-          title="Share Screen"
-        >
-          <FiMonitor size={20} />
-        </button>
-
-        <button 
-          onClick={() => setPresenterMode(!presenterMode)} 
-          className={`p-4 rounded-2xl transition-all ${presenterMode ? 'bg-purple-600 shadow-lg shadow-purple-500/20' : 'glass hover:bg-white/10'}`}
-          title="Presenter Mode"
-        >
+        <button onClick={shareScreen} className="p-4 rounded-2xl glass hover:bg-white/10 transition-colors" title="Share Screen"><FiMonitor size={20} /></button>
+        <button onClick={() => setPresenterMode(!presenterMode)} className={`p-4 rounded-2xl transition-all ${presenterMode ? 'bg-purple-600 shadow-lg shadow-purple-500/20' : 'glass hover:bg-white/10'}`} title="Presenter Mode">
           {presenterMode ? <FiMinimize size={20} /> : <FiMaximize size={20} />}
         </button>
-
-        <button 
-          onClick={recording ? stopRecording : startRecording} 
-          className={`p-4 rounded-2xl transition-all ${recording ? 'bg-red-500/20 text-red-500 border border-red-500/20' : 'glass hover:bg-white/10'}`}
-          title="Record Call"
-        >
+        <button onClick={recording ? stopRecording : startRecording} className={`p-4 rounded-2xl transition-all ${recording ? 'bg-red-500/20 text-red-500 border border-red-500/20' : 'glass hover:bg-white/10'}`} title="Record Call">
           <FiDisc size={20} className={recording ? 'animate-spin-slow' : ''} />
         </button>
 
         <div className="pl-4 border-l border-white/10 ml-2">
-          <button 
-            onClick={endCall} 
-            className="p-4 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-lg shadow-red-500/20 transition-all hover:scale-110 active:scale-95"
-            title="End Call"
-          >
-            <FiPhoneOff size={22} />
-          </button>
+          <button onClick={endCall} className="p-4 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-lg shadow-red-500/20 transition-all hover:scale-110 active:scale-95" title="End Call"><FiPhoneOff size={22} /></button>
         </div>
       </motion.div>
     </div>
