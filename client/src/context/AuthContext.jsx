@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api"; // ✅ correct import
+import { updateSocketToken } from "../services/socket"; // 🔐 Correct import
 
 const AuthContext = createContext();
 
@@ -26,6 +27,9 @@ export const AuthProvider = ({ children }) => {
 
         // ✅ Merge profile with stored info (to keep token!)
         setUserInfo({ ...stored, ...data });
+        
+        // 🔐 Ensure socket is aware of the token
+        if (stored.token) updateSocketToken(stored.token);
       } catch (error) {
         console.log("❌ Token invalid");
 
@@ -43,6 +47,11 @@ export const AuthProvider = ({ children }) => {
   const login = useCallback((data) => {
     localStorage.setItem("userInfo", JSON.stringify(data));
     setUserInfo(data);
+    
+    // 🔐 🚀 Update socket token for immediate secure connection
+    if (data.token) {
+      updateSocketToken(data.token);
+    }
   }, []);
 
   // ================= LOGOUT =================

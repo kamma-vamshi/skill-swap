@@ -126,8 +126,13 @@ const Call = () => {
         )}
         <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-md border ${callStatus === 'connected' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
           <div className={`w-2 h-2 rounded-full ${callStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500 animate-bounce'}`} />
-          <span className="text-[10px] font-black uppercase tracking-widest">
-            {callStatus === 'connected' ? 'Secure Linked' : callStatus === 'calling' ? 'Calling User...' : 'Establishing Link...'}
+          <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+            {callStatus === 'connected' ? (
+              <>
+                <span className="bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-500/10 text-[8px]">HD</span>
+                Secure Linked
+              </>
+            ) : callStatus === 'calling' ? 'Calling User...' : 'Establishing Link...'}
           </span>
         </div>
       </div>

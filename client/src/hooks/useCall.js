@@ -11,15 +11,16 @@ const ICE_SERVERS = {
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:global.stun.twilio.com:3478" },
   ],
+  iceCandidatePoolSize: 10, // 🚀 Faster connection setup by pre-fetching ICE candidates
 };
 
 export const useCall = (userInfo, initialData) => {
   const navigate = useNavigate();
   
-  // --- Refs ---
+  // --- Refs & State ---
   const peerConnection = useRef(null);
-  const localStream = useRef(null);
-  const remoteStream = useRef(null);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
   const iceQueue = useRef([]);
   const mediaRecorder = useRef(null);
   const remoteUserId = useRef(null);
@@ -34,15 +35,39 @@ export const useCall = (userInfo, initialData) => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   // --- Helpers ---
+  const applyMediaParameters = useCallback(async () => {
+    if (!peerConnection.current) return;
+    const senders = peerConnection.current.getSenders();
+    const videoSender = senders.find(s => s.track?.kind === "video");
+    
+    if (videoSender) {
+      const parameters = videoSender.getParameters();
+      if (!parameters.encodings) { parameters.encodings = [{}]; }
+      
+      // 🚀 Prioritize Balanced Bitrate (2Mbps)
+      parameters.encodings[0].maxBitrate = 2000000; 
+      parameters.encodings[0].maxFramerate = 30;
+      
+      try {
+        await videoSender.setParameters(parameters);
+        console.log("💎 Media parameters optimized for High Quality");
+      } catch (e) { console.warn("Failed to set video parameters", e); }
+    }
+  }, []);
+
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up WebRTC session...");
     if (peerConnection.current) {
       peerConnection.current.close();
       peerConnection.current = null;
     }
-    if (localStream.current) {
-      localStream.current.getTracks().forEach((track) => track.stop());
-      localStream.current = null;
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+      setLocalStream(null);
+    }
+    if (remoteStream) {
+      remoteStream.getTracks().forEach((track) => track.stop());
+      setRemoteStream(null);
     }
     iceQueue.current = [];
     setCallStatus("idle");
@@ -50,7 +75,7 @@ export const useCall = (userInfo, initialData) => {
     setPartnerInfo(null);
     setIsRecording(false);
     setIsScreenSharing(false);
-  }, []);
+  }, [localStream, remoteStream]);
 
   const flushIceQueue = async () => {
     if (!peerConnection.current || !peerConnection.current.remoteDescription) return;
@@ -78,12 +103,9 @@ export const useCall = (userInfo, initialData) => {
     };
 
     peerConnection.current.ontrack = (event) => {
-      console.log("📺 Received remote track");
-      if (remoteStream.current) {
-        event.streams[0].getTracks().forEach(track => remoteStream.current.addTrack(track));
-      } else {
-        remoteStream.current = event.streams[0];
-      }
+      console.log("📺 Received remote track:", event.track.kind);
+      const newStream = event.streams[0];
+      setRemoteStream(newStream);
     };
 
     peerConnection.current.oniceconnectionstatechange = () => {
@@ -94,31 +116,54 @@ export const useCall = (userInfo, initialData) => {
     };
 
     peerConnection.current.onconnectionstatechange = () => {
-      console.log("🔌 Connection State Change:", peerConnection.current.connectionState);
-      if (peerConnection.current.connectionState === "connected") setCallStatus("connected");
+      const state = peerConnection.current.connectionState;
+      console.log("🔌 Connection State Change:", state);
+      if (state === "connected") {
+        setCallStatus("connected");
+        applyMediaParameters(); // 💎 Optimize once connected
+      }
+      if (state === "failed" || state === "closed") {
+        setCallStatus("failed");
+      }
     };
 
     // Add local tracks
-    if (localStream.current) {
-      localStream.current.getTracks().forEach((track) => {
-        peerConnection.current.addTrack(track, localStream.current);
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        peerConnection.current.addTrack(track, localStream);
       });
     }
 
     return peerConnection.current;
-  }, []);
+  }, [localStream, applyMediaParameters]);
 
   const getMedia = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: true,
+        video: { 
+          width: { ideal: 1280 }, // 🎥 HD Quality (Ideal, not required)
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+          facingMode: "user"
+        },
+        audio: {
+          echoCancellation: true, // 🎙️ Pro Audio Processing
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
-      localStream.current = stream;
+      setLocalStream(stream);
       return stream;
     } catch (err) {
       console.error("❌ Media access denied", err);
-      throw err;
+      // Fallback for very low-end devices or missing permissions
+      try {
+        const fallback = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        setLocalStream(fallback);
+        return fallback;
+      } catch (e) {
+        throw err;
+      }
     }
   };
 
@@ -174,8 +219,8 @@ export const useCall = (userInfo, initialData) => {
   }, [cleanup, navigate]);
 
   const toggleMic = () => {
-    if (localStream.current) {
-      const audioTrack = localStream.current.getAudioTracks()[0];
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !micOn;
         setMicOn(!micOn);
@@ -184,8 +229,8 @@ export const useCall = (userInfo, initialData) => {
   };
 
   const toggleCam = () => {
-    if (localStream.current) {
-      const videoTrack = localStream.current.getVideoTracks()[0];
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !camOn;
         setCamOn(!camOn);
@@ -194,7 +239,7 @@ export const useCall = (userInfo, initialData) => {
   };
 
   const shareScreen = async () => {
-    if (!peerConnection.current || !localStream.current) return;
+    if (!peerConnection.current || !localStream) return;
     try {
       if (isScreenSharing) {
         // Switch back to camera
@@ -219,7 +264,7 @@ export const useCall = (userInfo, initialData) => {
   };
 
   const startRecording = () => {
-    const streamToRecord = remoteStream.current || localStream.current;
+    const streamToRecord = remoteStream || localStream;
     if (!streamToRecord) return;
     
     const recorder = new MediaRecorder(streamToRecord);
@@ -308,8 +353,8 @@ export const useCall = (userInfo, initialData) => {
     callStatus,
     partnerInfo,
     incomingCallData,
-    localStream: localStream.current,
-    remoteStream: remoteStream.current,
+    localStream,
+    remoteStream,
     micOn,
     camOn,
     isRecording,

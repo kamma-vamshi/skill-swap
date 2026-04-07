@@ -2,6 +2,10 @@ import { Server } from "socket.io";
 import Message from "../models/Message.js";
 import RoomMessage from "../models/RoomMessage.js";
 import SwapRoom from "../models/SwapRoom.js";
+import jwt from "jsonwebtoken";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 let io;
 
@@ -18,6 +22,24 @@ export const initSocket = (server) => {
       origin: "*",
       methods: ["GET", "POST"],
     },
+    transports: ["websocket"], // 🚀 Force WebSocket for better performance
+  });
+
+  // 🔐 Authentication Middleware (Loosened to allow initial connection)
+  io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    
+    // If no token, allow connection but without .user property
+    if (!token) return next();
+
+    jwt.verify(token, process.env.JWT_SECRET || "secret_key", (err, decoded) => {
+      if (err) {
+        console.warn("⚠️ Socket Auth Failed:", err.message);
+        return next(); // Still allow connection, just unauthenticated
+      }
+      socket.user = decoded; // Attach user info to socket
+      next();
+    });
   });
 
   io.on("connection", (socket) => {
@@ -28,6 +50,7 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("join", (userId) => {
       if (!userId) return;
+      console.log(`👤 User Joined: ${userId} (Socket: ${socket.id})`);
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
       socket.join(userId);
@@ -110,9 +133,11 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("callUser", ({ to, from, callerName, offer }) => {
       if (!to) return;
+      console.log(`📞 Call Attempt: ${from} -> ${to}`);
       
       // 🚨 BUSY CHECK
       if (activeCalls.has(to)) {
+        console.log(`🚫 User ${to} is BUSY`);
         return io.to(from).emit("callRejected", { reason: "busy" });
       }
 
@@ -121,6 +146,7 @@ export const initSocket = (server) => {
 
     socket.on("acceptCall", ({ to, answer }) => {
       if (!to || !currentUserId) return;
+      console.log(`✅ Call Accepted: ${currentUserId} -> ${to}`);
       
       // 🤝 Establish active call mapping
       activeCalls.set(currentUserId, to);
