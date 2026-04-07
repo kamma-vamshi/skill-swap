@@ -78,7 +78,12 @@ const NotificationManager = ({ children }) => {
     ringtoneRef.current.currentTime = 0;
     const callData = incomingCall;
     setIncomingCall(null);
-    navigate("/call", { state: { incomingCallData: callData } });
+    navigate("/call", { 
+      state: { 
+        incomingCallData: callData,
+        selectedUser: { _id: callData.from, name: callData.callerName }
+      } 
+    });
   };
 
   const rejectCall = () => {
