@@ -3,10 +3,10 @@ import socket from "../services/socket";
 import API from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { FiVideo, FiPaperclip, FiSend, FiCheck, FiCheckCircle } from "react-icons/fi";
+import { FiVideo, FiPaperclip, FiSend, FiCheck, FiCheckCircle, FiArrowLeft } from "react-icons/fi";
 import { motion, AnimatePresence } from "framer-motion";
 
-const Chat = ({ selectedUser }) => {
+const Chat = ({ selectedUser, onBack }) => {
   const { userInfo } = useAuth();
   const navigate = useNavigate();
 
@@ -102,13 +102,23 @@ const Chat = ({ selectedUser }) => {
   return (
     <div className="flex flex-col h-full bg-transparent">
       {/* HEADER */}
-      <div className="px-6 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center text-white font-bold text-xl shadow-lg border border-white/10">
+      <div className="px-4 md:px-6 py-3 md:py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+        <div className="flex items-center gap-3 md:gap-4">
+          {/* Mobile Back Button */}
+          <button 
+            onClick={onBack}
+            className="lg:hidden p-2 -ml-2 text-gray-400 hover:text-white transition-colors"
+          >
+            <FiArrowLeft size={24} />
+          </button>
+
+          <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl md:rounded-2xl flex items-center justify-center text-white font-bold text-lg md:text-xl shadow-lg border border-white/10">
             {selectedUser.name[0]}
           </div>
           <div>
-            <p className="font-display font-bold text-lg">{selectedUser.name}</p>
+            <p className="font-display font-bold text-base md:text-lg text-white truncate max-w-[120px] md:max-w-none">
+              {selectedUser.name}
+            </p>
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${onlineUsers.includes(selectedUser._id) ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-600'}`} />
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
