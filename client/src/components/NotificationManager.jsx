@@ -84,7 +84,7 @@ const NotificationManager = ({ children }) => {
   const rejectCall = () => {
     ringtoneRef.current.pause();
     ringtoneRef.current.currentTime = 0;
-    socket.emit("endCall", { to: incomingCall.from });
+    socket.emit("rejectCall", { to: incomingCall.from });
     setIncomingCall(null);
   };
 

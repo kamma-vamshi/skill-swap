@@ -9,6 +9,8 @@ let io;
 const onlineUsers = new Map();
 // 🏫 Track classroom presence (roomId -> Set of userIds)
 const roomPresence = new Map();
+// 📞 Track active calls (userId -> partnerUserId)
+const activeCalls = new Map();
 
 export const initSocket = (server) => {
   io = new Server(server, {
@@ -19,13 +21,14 @@ export const initSocket = (server) => {
   });
 
   io.on("connection", (socket) => {
+    let currentUserId = null;
 
     // ===============================
     // 🔗 JOIN (GLOBAL USER JOIN)
     // ===============================
     socket.on("join", (userId) => {
       if (!userId) return;
-
+      currentUserId = userId;
       onlineUsers.set(userId, socket.id);
       socket.join(userId);
 
@@ -107,11 +110,22 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("callUser", ({ to, from, callerName, offer }) => {
       if (!to) return;
+      
+      // 🚨 BUSY CHECK
+      if (activeCalls.has(to)) {
+        return io.to(from).emit("callRejected", { reason: "busy" });
+      }
+
       io.to(to).emit("incomingCall", { from, callerName, offer });
     });
 
     socket.on("acceptCall", ({ to, answer }) => {
-      if (!to) return;
+      if (!to || !currentUserId) return;
+      
+      // 🤝 Establish active call mapping
+      activeCalls.set(currentUserId, to);
+      activeCalls.set(to, currentUserId);
+
       io.to(to).emit("callAccepted", { answer });
     });
 
@@ -126,7 +140,11 @@ export const initSocket = (server) => {
     });
 
     socket.on("endCall", ({ to }) => {
-      if (!to) return;
+      if (!to || !currentUserId) return;
+      
+      activeCalls.delete(currentUserId);
+      activeCalls.delete(to);
+
       io.to(to).emit("callEnded");
     });
 
@@ -233,19 +251,23 @@ export const initSocket = (server) => {
     // ❌ DISCONNECT
     // ===============================
     socket.on("disconnect", () => {
+      if (currentUserId) {
+        // 🧹 Cleanup active calls on abrupt disconnect
+        if (activeCalls.has(currentUserId)) {
+          const partnerId = activeCalls.get(currentUserId);
+          io.to(partnerId).emit("callEnded");
+          activeCalls.delete(partnerId);
+          activeCalls.delete(currentUserId);
+        }
 
-      for (let [userId, socketId] of onlineUsers.entries()) {
-        if (socketId === socket.id) {
-          onlineUsers.delete(userId);
-          
-          // Remove from all rooms
-          for (let [roomId, presence] of roomPresence.entries()) {
-            if (presence.has(userId)) {
-              presence.delete(userId);
-              io.to(roomId).emit("presenceUpdate", Array.from(presence));
-            }
+        onlineUsers.delete(currentUserId);
+        
+        // Remove from all rooms
+        for (let [roomId, presence] of roomPresence.entries()) {
+          if (presence.has(currentUserId)) {
+            presence.delete(currentUserId);
+            io.to(roomId).emit("presenceUpdate", Array.from(presence));
           }
-          break;
         }
       }
 

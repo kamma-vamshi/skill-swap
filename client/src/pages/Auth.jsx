@@ -58,11 +58,6 @@ const Auth = () => {
         setIsVerifying(true);
       }
     } catch (err) {
-      if (err.response?.data?.needsVerification) {
-        setVerificationEmail(err.response.data.email);
-        setIsVerifying(true);
-        return;
-      }
       alert(err.response?.data?.message || "Something went wrong");
     } finally {
       setLoading(false);
