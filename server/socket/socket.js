@@ -15,6 +15,8 @@ const onlineUsers = new Map();
 const roomPresence = new Map();
 // 📞 Track active calls (userId -> partnerUserId)
 const activeCalls = new Map();
+// ⏳ Store signals for users who aren't in their room yet (userId -> signalData)
+const pendingCalls = new Map();
 
 export const initSocket = (server) => {
   io = new Server(server, {
@@ -54,6 +56,17 @@ export const initSocket = (server) => {
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
       socket.join(userId);
+
+      // 🚀 RESTORATIVE SIGNALING: Push pending calls on join
+      if (pendingCalls.has(userId)) {
+        const callData = pendingCalls.get(userId);
+        const age = Date.now() - callData.sentAt;
+        if (age < 15000) { // Only push if FRESH (< 15s)
+          console.log(`📡 Pushing pending call to ${userId} (Age: ${age}ms)`);
+          io.to(userId).emit("incomingCall", callData);
+        }
+        pendingCalls.delete(userId);
+      }
 
       io.emit("onlineUsers", Array.from(onlineUsers.keys()));
     });
@@ -131,62 +144,71 @@ export const initSocket = (server) => {
     // ===============================
     // 📞 1-TO-1 CALL SIGNALING
     // ===============================
-    socket.on("callUser", ({ to, from, callerName, offer }) => {
-      if (!to) return;
+    socket.on("callUser", ({ to, from, callerName, offer, callId }) => {
+      if (!to || !callId) return;
       const sentAt = Date.now();
-      console.log(`📞 Call Attempt: ${from} -> ${to} | Time: ${new Date(sentAt).toLocaleTimeString()}`);
+      console.log(`📞 Call Request [${callId}]: ${from} -> ${to}`);
       
       const recipientRoom = io.sockets.adapter.rooms.get(to);
       const recipientCount = recipientRoom ? recipientRoom.size : 0;
-      console.log(`📡 Signal target room: ${to} | Active Sockets: ${recipientCount}`);
 
       // 🚨 BUSY CHECK
       if (activeCalls.has(to)) {
-        console.log(`🚫 User ${to} is BUSY`);
-        return io.to(from).emit("callRejected", { reason: "busy" });
+        console.log(`🚫 BUSY: ${to}`);
+        return io.to(from).emit("callRejected", { callId, reason: "busy" });
       }
+
+      const signalData = { from, callerName, offer, callId, sentAt };
 
       if (recipientCount === 0) {
-        console.warn(`⚠️ Signal delivery failure: User ${to} has 0 active sockets.`);
-        // Note: We don't return here so the signal can potentially be delivered 
-        // if the user reconnects within the socket.io buffer window
+        console.warn(`⏳ PARKING: ${to} is offline. Buffering signal...`);
+        pendingCalls.set(to, signalData);
+        // Inform caller that we're waiting for the peer to "wake up"
+        io.to(from).emit("callWaiting", { callId });
       } else {
-        // ✅ Acknowledge delivery to the caller
-        io.to(from).emit("callRinging", { to });
+        // ✅ Direct delivery
+        io.to(to).emit("incomingCall", signalData);
+        io.to(from).emit("callRinging", { callId });
       }
-
-      // Relay the call with a timestamp
-      io.to(to).emit("incomingCall", { from, callerName, offer, sentAt });
     });
 
-    socket.on("acceptCall", ({ to, answer }) => {
-      if (!to || !currentUserId) return;
-      console.log(`✅ Call Accepted: ${currentUserId} -> ${to}`);
+    socket.on("callAcknowledge", ({ to, callId }) => {
+      if (!to || !callId) return;
+      console.log(`🔔 ACK RECEIVED [${callId}] by recipient`);
+      io.to(to).emit("callRinging", { callId });
+    });
+
+    socket.on("acceptCall", ({ to, answer, callId }) => {
+      if (!to || !currentUserId || !callId) return;
+      console.log(`✅ ACCEPTED [${callId}]: ${currentUserId} -> ${to}`);
       
-      // 🤝 Establish active call mapping
-      activeCalls.set(currentUserId, to);
-      activeCalls.set(to, currentUserId);
+      pendingCalls.delete(currentUserId);
+      activeCalls.set(currentUserId, { to, callId });
+      activeCalls.set(to, { to: currentUserId, callId });
 
-      io.to(to).emit("callAccepted", { answer });
+      io.to(to).emit("callAccepted", { answer, callId });
     });
 
-    socket.on("rejectCall", ({ to }) => {
-      if (!to) return;
-      io.to(to).emit("callRejected");
+    socket.on("rejectCall", ({ to, callId }) => {
+      if (!to || !callId) return;
+      console.log(`🚫 REJECTED [${callId}]`);
+      io.to(to).emit("callRejected", { callId });
     });
 
-    socket.on("iceCandidate", ({ to, candidate }) => {
-      if (!to) return;
-      io.to(to).emit("iceCandidate", { candidate });
+    socket.on("iceCandidate", ({ to, candidate, callId }) => {
+      if (!to || !callId) return;
+      io.to(to).emit("iceCandidate", { candidate, callId });
     });
 
-    socket.on("endCall", ({ to }) => {
+    socket.on("endCall", ({ to, callId }) => {
       if (!to || !currentUserId) return;
+      console.log(`📞 ENDED [${callId}]`);
       
       activeCalls.delete(currentUserId);
       activeCalls.delete(to);
+      pendingCalls.delete(to);
 
-      io.to(to).emit("callEnded");
+      io.to(to).emit("callEnded", { callId });
     });
 
     // ===============================
