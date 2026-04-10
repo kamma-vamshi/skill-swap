@@ -28,9 +28,14 @@ const NotificationManager = ({ children }) => {
     
     if (!userInfo?._id) return;
 
-    // 🚀 STABILIZATION: Join room once on mount/auth
-    console.log(`📡 Signaling initialized for user: ${userInfo._id}`);
-    socket.emit("join", userInfo._id);
+    // 🚀 PERSISTENCE: Re-join room on every connection (handles jitters/sleep)
+    const handleConnect = () => {
+      console.log(`🔌 Socket Connected: Re-joining room ${userInfo._id}`);
+      socket.emit("join", userInfo._id);
+    };
+
+    if (socket.connected) handleConnect();
+    socket.on("connect", handleConnect);
 
     // 📩 MESSAGE NOTIFICATION
     const handleMessage = (msg) => {
@@ -56,6 +61,15 @@ const NotificationManager = ({ children }) => {
     // 📞 GLOBAL INCOMING CALL
     const handleIncomingCall = (data) => {
       console.log("☎️ SIGNAL RECEIVED: incomingCall", data);
+
+      // 👻 GHOST CALL PREVENTION: Reject stale signals (> 30s)
+      const now = Date.now();
+      const sentAt = data.sentAt || 0;
+      if (sentAt && now - sentAt > 30000) {
+        console.warn("🚫 Ignoring stale ghost call signal (30s old)");
+        return;
+      }
+
       if (locationRef.current.pathname === "/call") return;
 
       setIncomingCall(data);
