@@ -28,3 +28,4 @@ const attendanceSchema = new mongoose.Schema(
 );
 
 export default mongoose.model("Attendance", attendanceSchema);
+s
