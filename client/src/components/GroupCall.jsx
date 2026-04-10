@@ -13,6 +13,11 @@ const getIceServers = () => {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" },
+    { urls: "stun:stun.l.google.com:19305" },
+    { urls: "stun:stun.services.mozilla.com" },
   ];
 
   if (process.env.REACT_APP_TURN_URL) {
@@ -23,7 +28,11 @@ const getIceServers = () => {
     });
   }
 
-  return { iceServers: servers };
+  return { 
+    iceServers: servers,
+    iceCandidatePoolSize: 10,
+    iceTransportPolicy: "all"
+  };
 };
 
 const ICE_SERVERS = getIceServers();
@@ -80,9 +89,24 @@ const GroupCall = ({ roomId }) => {
     };
 
     peer.oniceconnectionstatechange = () => {
-      if (peer.iceConnectionState === "failed") {
+      const state = peer.iceConnectionState;
+      if (state === "failed") {
         console.warn(`ICE failed for ${socketId}, attempting restart...`);
         peer.restartIce();
+      }
+    };
+
+    // 🚀 Mesh Optimization: Bitrate Capping (800kbps)
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === "connected") {
+        const senders = peer.getSenders();
+        const videoSender = senders.find(s => s.track?.kind === "video");
+        if (videoSender) {
+          const params = videoSender.getParameters();
+          if (!params.encodings) params.encodings = [{}];
+          params.encodings[0].maxBitrate = 800000; 
+          videoSender.setParameters(params).catch(e => console.warn("Failed to cap bitrate", e));
+        }
       }
     };
 
@@ -94,13 +118,25 @@ const GroupCall = ({ roomId }) => {
       });
     }
 
+    // 🕒 Peer Connection Watchdog (30s)
+    setTimeout(() => {
+      if (peer.iceConnectionState !== "connected" && peer.iceConnectionState !== "completed") {
+        console.warn(`🕒 Handshake timed out for ${socketId}. Attempting one-time recovery...`);
+        peer.restartIce();
+      }
+    }, 30000);
+
     peersRef.current[socketId] = peer;
     return peer;
   }, [flushIceQueue]);
 
   const startMedia = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: {
+        width: { max: 640 }, // 📉 Lower resolution for mesh efficiency
+        height: { max: 480 },
+        frameRate: { max: 24 },
+      },
       audio: {
         noiseSuppression: true,
         echoCancellation: true,
