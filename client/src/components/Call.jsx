@@ -136,7 +136,10 @@ const Call = () => {
           <div className="flex items-center gap-6">
             <div className="hidden md:flex flex-col items-end">
               <span className="text-xs font-bold text-gray-300">{displayName}</span>
-              <span className="text-[10px] text-gray-500">{callStatus === 'connected' ? 'Live Connection' : 'Handshaking...'}</span>
+              <span className="text-[10px] text-gray-500">
+                {callStatus === 'connected' ? 'Live Connection' : 
+                 callStatus === 'failed' ? 'Reconnecting...' : 'Handshaking...'}
+              </span>
             </div>
             <div className="w-10 h-10 rounded-full border border-white/10 bg-white/5 flex items-center justify-center">
               <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${displayName}`} alt="user" className="w-8 h-8" />
@@ -174,10 +177,17 @@ const Call = () => {
             <span className="text-[10px] font-black tracking-widest text-red-500 uppercase">Live Recording</span>
           </motion.div>
         )}
-        <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl backdrop-blur-xl border ${callStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-          <div className={`w-2 h-2 rounded-full ${callStatus === 'connected' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-amber-500 animate-bounce'}`} />
+        <div className={`flex items-center gap-3 px-4 py-2 rounded-2xl backdrop-blur-xl border ${
+          callStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 
+          callStatus === 'failed' ? 'bg-red-500/10 border-red-500/20 text-red-500' : 
+          'bg-white/5 border-white/10 text-gray-400'}`}>
+          <div className={`w-2 h-2 rounded-full ${
+            callStatus === 'connected' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 
+            callStatus === 'failed' ? 'bg-red-500 animate-pulse' : 
+            'bg-amber-500 animate-bounce'}`} />
           <span className="text-[10px] font-black uppercase tracking-widest">
-            {callStatus === 'connected' ? 'Ultra HD • Encrypted' : 'Syncing Streams...'}
+            {callStatus === 'connected' ? 'Ultra HD • Encrypted' : 
+             callStatus === 'failed' ? 'Signal Lost • Retrying' : 'Syncing Streams...'}
           </span>
         </div>
       </div>
