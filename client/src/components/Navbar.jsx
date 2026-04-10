@@ -1,87 +1,53 @@
-import Sidebar from "./Sidebar";
-import Navbar from "./Navbar";
-import BottomNav from "./BottomNav";
-import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import socket from "../services/socket";
 import { useAuth } from "../context/AuthContext";
-import toast from "react-hot-toast";
+import { FiLogOut, FiUser } from "react-icons/fi";
 
-const Layout = ({ children }) => {
+const Navbar = () => {
   const navigate = useNavigate();
-  const { userInfo } = useAuth();
+  const { logout, userInfo } = useAuth();
 
-  useEffect(() => {
-    if (!userInfo?._id) return;
-
-    const handleIncomingCall = ({ from, callerName, offer }) => {
-      toast(
-        (t) => (
-          <div className="flex flex-col gap-3">
-            <p className="font-bold text-gray-800">
-              📞 Incoming video call from <span className="text-purple-600">{callerName || "Unknown"}</span>...
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  socket.emit("rejectCall", { to: from });
-                }}
-                className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm transition-colors font-medium border-0"
-              >
-                Decline
-              </button>
-              <button
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  navigate("/call", {
-                    state: {
-                      selectedUser: { _id: from, name: callerName || "Unknown" },
-                      incomingCallData: { from, callerName, offer },
-                    },
-                  });
-                }}
-                className="px-4 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm transition-colors font-medium shadow-lg shadow-green-500/30 border-0"
-              >
-                Answer
-              </button>
-            </div>
-          </div>
-        ),
-        { duration: 30000, id: `call-${from}` }
-      );
-    };
-
-    socket.on("incomingCall", handleIncomingCall);
-
-    return () => {
-      socket.off("incomingCall", handleIncomingCall);
-    };
-  }, [userInfo, navigate]);
+  const handleLogout = () => {
+    logout();
+    setTimeout(() => {
+      navigate("/login", { replace: true });
+    }, 50);
+  };
 
   return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
-      
-      {/* SIDEBAR */}
-      <Sidebar />
-
-      {/* RIGHT SIDE */}
-      <div className="flex-1 flex flex-col relative overflow-hidden">
+    <nav className="fixed top-2 md:top-4 left-0 right-0 md:left-1/2 md:-translate-x-1/2 w-full md:w-[95%] max-w-7xl z-50 px-3 md:px-0">
+      <div className="glass-dark px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-2xl flex justify-between items-center border border-white/10 shadow-2xl">
         
-        {/* NAVBAR */}
-        <Navbar />
+        <div 
+          className="flex items-center gap-2 cursor-pointer group"
+          onClick={() => navigate("/dashboard")}
+        >
+          <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center text-white font-bold text-lg md:text-xl shadow-lg shadow-purple-500/20 group-hover:scale-110 transition-transform">
+            S
+          </div>
+          <h2 className="text-lg md:text-xl font-display font-bold tracking-tight">
+            Skill<span className="gradient-text">Swap</span>
+          </h2>
+        </div>
 
-        {/* CONTENT */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 pt-20 md:pt-24 pb-28 lg:pb-6 custom-scrollbar">
-          {children}
-        </main>
+        <div className="flex items-center gap-3 md:gap-6">
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
+            <FiUser className="text-purple-400" />
+            <span className="text-xs md:text-sm font-medium text-gray-200 truncate max-w-[80px] md:max-w-none">
+              {userInfo?.name || "User"}
+            </span>
+          </div>
 
-        {/* MOBILE BOTTOM NAV */}
-        <BottomNav />
-
+          <button
+            onClick={handleLogout}
+            className="p-2 md:p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-300 border border-red-500/20"
+            title="Logout"
+          >
+            <FiLogOut className="size-4 md:size-5" />
+          </button>
+        </div>
       </div>
-    </div>
+    </nav>
   );
 };
 
-export default Layout;
+export default Navbar;
