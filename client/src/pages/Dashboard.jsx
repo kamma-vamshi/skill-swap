@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { motion } from "framer-motion";
 import { FiClock, FiUsers, FiStar } from "react-icons/fi";
 import socket from "../services/socket";
+import UserCard from "../components/UserCard";
 
 const Dashboard = () => {
   const { userInfo, loading, setUserInfo } = useAuth();
@@ -182,59 +183,5 @@ const Empty = ({ text }) => (
     <p className="text-gray-500 font-medium">{text}</p>
   </div>
 );
-
-const Chip = ({ children, color }) => (
-  <span className={`chip ${color}`}>
-    {children}
-  </span>
-);
-
-const UserCard = ({ user, toggleFavorite, favorites }) => {
-  const isFav = favorites.some((f) => f._id === user._id);
-
-  return (
-    <div className="card flex flex-col items-center text-center group">
-      <div className="w-20 h-20 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-full mb-4 flex items-center justify-center text-3xl font-bold border border-white/5 group-hover:scale-110 transition-transform duration-500">
-        {user.name[0]}
-      </div>
-      <h3 className="font-display font-bold text-xl mb-1 group-hover:gradient-text transition-all duration-300">
-        {user.name}
-      </h3>
-      <p className="text-gray-400 text-sm mb-2">{user.email}</p>
-      
-      {/* ⭐ RATING */}
-      <div className="flex items-center gap-1.5 mb-4 bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
-        <FiStar className="text-yellow-500 fill-yellow-500 shadow-glow shadow-yellow-500/50" size={14} />
-        <span className="text-xs font-bold text-gray-200">
-          {user.averageRating ? user.averageRating.toFixed(1) : "No rating"}
-        </span>
-        <span className="text-[10px] text-gray-500 font-medium">
-          ({user.totalReviews || 0})
-        </span>
-      </div>
-
-      <div className="mt-auto w-full">
-        <div className="flex flex-wrap justify-center gap-2 mb-6">
-          {user.skillsOffered?.slice(0, 3).map((s, i) => (
-            <Chip key={i} color="green">
-              {s}
-            </Chip>
-          ))}
-          {user.skillsOffered?.length > 3 && (
-            <span className="text-[10px] text-gray-500 font-bold">+{user.skillsOffered.length - 3} MORE</span>
-          )}
-        </div>
-
-        <button
-          onClick={() => toggleFavorite(user)}
-          className={`w-full btn ${isFav ? 'red' : 'outline'} py-2 text-sm flex items-center justify-center gap-2`}
-        >
-          <FiStar className={isFav ? 'fill-current' : ''} />
-          {isFav ? "Favorited" : "Add to Favorites"}
-        </button>
-      </div>
-    </div>
-  );
-};
 
 export default Dashboard;
