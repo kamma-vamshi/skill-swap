@@ -135,10 +135,18 @@ export const initSocket = (server) => {
       if (!to) return;
       console.log(`📞 Call Attempt: ${from} -> ${to}`);
       
+      const recipientRoom = io.sockets.adapter.rooms.get(to);
+      const recipientCount = recipientRoom ? recipientRoom.size : 0;
+      console.log(`📡 Signal target room: ${to} | Active Sockets: ${recipientCount}`);
+
       // 🚨 BUSY CHECK
       if (activeCalls.has(to)) {
         console.log(`🚫 User ${to} is BUSY`);
         return io.to(from).emit("callRejected", { reason: "busy" });
+      }
+
+      if (recipientCount === 0) {
+        console.warn(`⚠️ Signal delivery failure: User ${to} has 0 active sockets.`);
       }
 
       io.to(to).emit("incomingCall", { from, callerName, offer });
