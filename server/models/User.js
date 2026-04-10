@@ -94,7 +94,7 @@ const userSchema = new mongoose.Schema(
     lastSeen: {
       type: Date,
     },
-    
+
     // 📈 Progression (Swap Classroom)
     skillsLearned: [{
       type: String,
@@ -117,9 +117,9 @@ const userSchema = new mongoose.Schema(
 );
 
 // ✅ TEXT INDEX FOR MARKETPLACE SEARCH
-userSchema.index({ 
-  name: "text", 
-  skillsOffered: "text", 
+userSchema.index({
+  name: "text",
+  skillsOffered: "text",
   skillsWanted: "text"
 });
 
