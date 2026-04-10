@@ -74,12 +74,16 @@ const Call = () => {
     else ringbackRef.current.pause();
   }, [callStatus]);
 
-  // Handle Initial State from Location
+  // Handle Initial State from Location (Calling or Auto-Accepting)
   useEffect(() => {
-    if (location.state?.autoCall && callStatus === "idle") {
-      startCall(location.state.selectedUser);
+    if (callStatus === "idle") {
+      if (location.state?.autoCall && location.state?.selectedUser) {
+        startCall(location.state.selectedUser);
+      } else if (location.state?.autoAccept && location.state?.incomingCallData) {
+        acceptCall(location.state.incomingCallData);
+      }
     }
-  }, [location.state, callStatus, startCall]);
+  }, [location.state, callStatus, startCall, acceptCall]);
 
   const isInitializing = (location.state?.selectedUser || location.state?.incomingCallData) && callStatus === "idle";
 
