@@ -230,6 +230,7 @@ export const useCall = (userInfo, initialData) => {
         from: userInfo._id,
         callerName: userInfo.name,
         offer,
+        sentAt: Date.now(), // 🚀 Added local timestamp
       });
     } catch (err) {
       console.error("Call initialization failed", err);
@@ -470,12 +471,18 @@ export const useCall = (userInfo, initialData) => {
       }
     };
 
+    const handleCallRinging = () => {
+      console.log("🔔 Signal ACK: Remote peer is ringing");
+      setCallStatus("ringing");
+    };
+
     socket.on("incomingCall", handleIncomingCall);
     socket.on("callAccepted", handleCallAccepted);
     socket.on("iceCandidate", handleIceCandidate);
     socket.on("callRejected", handleCallRejected);
     socket.on("callEnded", handleCallEnded);
     socket.on("iceRestart", handleIceRestart);
+    socket.on("callRinging", handleCallRinging);
 
     return () => {
       socket.off("incomingCall", handleIncomingCall);
@@ -484,6 +491,7 @@ export const useCall = (userInfo, initialData) => {
       socket.off("callRejected", handleCallRejected);
       socket.off("callEnded", handleCallEnded);
       socket.off("iceRestart", handleIceRestart);
+      socket.off("callRinging", handleCallRinging);
     };
   }, [userInfo?._id, callStatus, cleanup, navigate, flushIceQueue]);
 
