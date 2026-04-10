@@ -133,7 +133,8 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("callUser", ({ to, from, callerName, offer }) => {
       if (!to) return;
-      console.log(`📞 Call Attempt: ${from} -> ${to}`);
+      const sentAt = Date.now();
+      console.log(`📞 Call Attempt: ${from} -> ${to} | Time: ${new Date(sentAt).toLocaleTimeString()}`);
       
       const recipientRoom = io.sockets.adapter.rooms.get(to);
       const recipientCount = recipientRoom ? recipientRoom.size : 0;
@@ -147,9 +148,15 @@ export const initSocket = (server) => {
 
       if (recipientCount === 0) {
         console.warn(`⚠️ Signal delivery failure: User ${to} has 0 active sockets.`);
+        // Note: We don't return here so the signal can potentially be delivered 
+        // if the user reconnects within the socket.io buffer window
+      } else {
+        // ✅ Acknowledge delivery to the caller
+        io.to(from).emit("callRinging", { to });
       }
 
-      io.to(to).emit("incomingCall", { from, callerName, offer });
+      // Relay the call with a timestamp
+      io.to(to).emit("incomingCall", { from, callerName, offer, sentAt });
     });
 
     socket.on("acceptCall", ({ to, answer }) => {
