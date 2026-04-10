@@ -138,6 +138,7 @@ const Call = () => {
               <span className="text-xs font-bold text-gray-300">{displayName}</span>
               <span className="text-[10px] text-gray-500">
                 {callStatus === 'connected' ? 'Live Connection' : 
+                 callStatus === 'ringing' ? 'Ringing Remote...' :
                  callStatus === 'failed' ? 'Reconnecting...' : 'Handshaking...'}
               </span>
             </div>
@@ -187,13 +188,14 @@ const Call = () => {
             'bg-amber-500 animate-bounce'}`} />
           <span className="text-[10px] font-black uppercase tracking-widest">
             {callStatus === 'connected' ? 'Ultra HD • Encrypted' : 
+             callStatus === 'ringing' ? 'Peer Notified • Ringing' :
              callStatus === 'failed' ? 'Signal Lost • Retrying' : 'Syncing Streams...'}
           </span>
         </div>
       </div>
 
-      {/* 📲 Calling State */}
-      {callStatus === 'calling' && (
+      {/* 📲 Calling/Ringing State */}
+      {(callStatus === 'calling' || callStatus === 'ringing') && (
         <div className="absolute inset-0 z-40 bg-[#020617]/80 backdrop-blur-3xl flex items-center justify-center">
           <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center">
             <div className="relative mb-10">
@@ -202,8 +204,12 @@ const Call = () => {
                 {displayName[0]}
               </div>
             </div>
-            <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter italic">Calling {displayName}</h2>
-            <p className="text-purple-400 font-black text-[11px] uppercase tracking-[0.3em] animate-pulse">Requesting Uplink...</p>
+            <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter italic">
+              {callStatus === 'ringing' ? `Ringing ${displayName}` : `Calling ${displayName}`}
+            </h2>
+            <p className="text-purple-400 font-black text-[11px] uppercase tracking-[0.3em] animate-pulse">
+              {callStatus === 'ringing' ? 'Waiting for answer...' : 'Requesting Uplink...'}
+            </p>
             <button onClick={endCall} className="mt-12 p-6 bg-red-600 rounded-full hover:scale-110 active:scale-90 transition-all shadow-2xl shadow-red-500/40 border-4 border-[#020617]">
               <FiPhoneOff size={28} />
             </button>
