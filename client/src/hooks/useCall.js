@@ -138,7 +138,7 @@ export const useCall = (userInfo, initialData) => {
     setCallStatus("calling");
 
     try {
-      const stream = await getMedia();
+      await getMedia();
       const pc = await initPeerConnection(user._id);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -153,7 +153,7 @@ export const useCall = (userInfo, initialData) => {
     currentCallId.current = data.callId;
     setCallStatus("connecting");
     try {
-      const stream = await getMedia();
+      await getMedia();
       const pc = await initPeerConnection(data.from);
       await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
       await flushIceQueue();
