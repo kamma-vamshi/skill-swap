@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import socket from "../services/socket";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-hot-toast";
 
 const getIceServers = () => {
   const servers = [
@@ -10,6 +11,8 @@ const getIceServers = () => {
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:global.stun.twilio.com:3478" },
+    { urls: "stun:stun.l.google.com:19305" },
+    { urls: "stun:stun.services.mozilla.com" },
   ];
 
   if (process.env.REACT_APP_TURN_URL) {
@@ -23,6 +26,7 @@ const getIceServers = () => {
   return {
     iceServers: servers,
     iceCandidatePoolSize: 10,
+    iceTransportPolicy: "all", // Allow relay
   };
 };
 
@@ -178,7 +182,7 @@ export const useCall = (userInfo, initialData) => {
         restartIce();
       }
       if (state === "disconnected") {
-        setCallStatus("failed");
+        console.warn("⚠️ ICE Disconnected. Watching for recovery...");
       }
     };
 
@@ -220,6 +224,7 @@ export const useCall = (userInfo, initialData) => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      console.log(`📤 EMITTING: callUser to: ${user._id}`);
       socket.emit("callUser", {
         to: user._id,
         from: userInfo._id,
@@ -481,6 +486,27 @@ export const useCall = (userInfo, initialData) => {
       socket.off("iceRestart", handleIceRestart);
     };
   }, [userInfo?._id, callStatus, cleanup, navigate, flushIceQueue]);
+
+  // --- Watchdog ---
+  useEffect(() => {
+    let timeout;
+    if (callStatus === "connecting" || callStatus === "calling") {
+      timeout = setTimeout(() => {
+        console.warn("🕒 Connection handshake timed out. Triggering rescue...");
+        if (peerConnection.current?.iceConnectionState !== "connected") {
+          restartIce();
+          // Give it another 10s after restart, otherwise fail
+          setTimeout(() => {
+            if (peerConnection.current?.iceConnectionState !== "connected") {
+              setCallStatus("failed");
+              toast.error("Connection failed. Please try again.");
+            }
+          }, 10000);
+        }
+      }, 20000); 
+    }
+    return () => clearTimeout(timeout);
+  }, [callStatus, restartIce]);
 
   return {
     callStatus,
