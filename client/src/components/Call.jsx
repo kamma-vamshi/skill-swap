@@ -65,13 +65,21 @@ const Call = () => {
     }
   }, [remoteStream]);
 
-  // Handle Ringtones based on state
+  // 🎵 Handle Ringtones & Feedback logic
   useEffect(() => {
-    if (callStatus === "incoming") ringtoneRef.current.play().catch(() => {});
-    else ringtoneRef.current.pause();
+    const ringtone = ringtoneRef.current;
+    const ringback = ringbackRef.current;
 
-    if (callStatus === "calling") ringbackRef.current.play().catch(() => {});
-    else ringbackRef.current.pause();
+    // Recipient hears Ringtone
+    if (callStatus === "incoming") ringtone.play().catch(() => {});
+    else ringtone.pause();
+
+    // Caller hears Ringback (during Requesting, Parking, or Ringing)
+    if (callStatus === "calling" || callStatus === "ringing" || callStatus === "connecting") {
+      ringback.play().catch(() => {});
+    } else {
+      ringback.pause();
+    }
   }, [callStatus]);
 
   // Handle Initial State from Location (Calling or Auto-Accepting)
@@ -140,10 +148,11 @@ const Call = () => {
           <div className="flex items-center gap-6">
             <div className="hidden md:flex flex-col items-end">
               <span className="text-xs font-bold text-gray-300">{displayName}</span>
-              <span className="text-[10px] text-gray-500">
+            <span className="text-[10px] text-gray-500">
                 {callStatus === 'connected' ? 'Live Connection' : 
                  callStatus === 'ringing' ? 'Ringing Remote...' :
-                 callStatus === 'failed' ? 'Reconnecting...' : 'Handshaking...'}
+                 callStatus === 'connecting' ? 'Buffer: Waiting for join...' :
+                 callStatus === 'failed' ? 'Signal Lost • Reconnecting' : 'Initializing Handshake...'}
               </span>
             </div>
             <div className="w-10 h-10 rounded-full border border-white/10 bg-white/5 flex items-center justify-center">
@@ -211,8 +220,11 @@ const Call = () => {
             <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter italic">
               {callStatus === 'ringing' ? `Ringing ${displayName}` : `Calling ${displayName}`}
             </h2>
-            <p className="text-purple-400 font-black text-[11px] uppercase tracking-[0.3em] animate-pulse">
-              {callStatus === 'ringing' ? 'Waiting for answer...' : 'Requesting Uplink...'}
+            <p className={`font-black text-[11px] uppercase tracking-[0.3em] animate-pulse ${
+              callStatus === 'ringing' ? 'text-emerald-400' : 'text-purple-400'
+            }`}>
+              {callStatus === 'ringing' ? 'Peer Verified • Ringing' : 
+               callStatus === 'connecting' ? 'Recipient Offline • Parking Signal' : 'Requesting Uplink...'}
             </p>
             <button onClick={endCall} className="mt-12 p-6 bg-red-600 rounded-full hover:scale-110 active:scale-90 transition-all shadow-2xl shadow-red-500/40 border-4 border-[#020617]">
               <FiPhoneOff size={28} />
