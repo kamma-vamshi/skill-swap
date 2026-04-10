@@ -2,17 +2,31 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import socket from "../services/socket";
 import { useNavigate } from "react-router-dom";
 
-const ICE_SERVERS = {
-  iceServers: [
+const getIceServers = () => {
+  const servers = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
     { urls: "stun:global.stun.twilio.com:3478" },
-  ],
-  iceCandidatePoolSize: 10, // 🚀 Faster connection setup by pre-fetching ICE candidates
+  ];
+
+  if (process.env.REACT_APP_TURN_URL) {
+    servers.push({
+      urls: process.env.REACT_APP_TURN_URL,
+      username: process.env.REACT_APP_TURN_USERNAME,
+      credential: process.env.REACT_APP_TURN_PASSWORD,
+    });
+  }
+
+  return {
+    iceServers: servers,
+    iceCandidatePoolSize: 10,
+  };
 };
+
+const ICE_SERVERS = getIceServers();
 
 export const useCall = (userInfo, initialData) => {
   const navigate = useNavigate();
@@ -80,7 +94,7 @@ export const useCall = (userInfo, initialData) => {
     setIsScreenSharing(false);
   }, [localStream, remoteStream]);
 
-  const flushIceQueue = async () => {
+  const flushIceQueue = useCallback(async () => {
     if (!peerConnection.current || !peerConnection.current.remoteDescription) return;
     console.log("❄️ Flushing ICE queue:", iceQueue.current.length);
     while (iceQueue.current.length > 0) {
@@ -91,56 +105,21 @@ export const useCall = (userInfo, initialData) => {
         console.warn("Failed to add queued ICE candidate", e);
       }
     }
-  };
+  }, []);
 
-  const initPeerConnection = useCallback(async (targetUserId) => {
-    console.log("🏗️ Initializing PeerConnection for:", targetUserId);
-    remoteUserId.current = targetUserId;
-    
-    peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
-
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit("iceCandidate", { to: targetUserId, candidate: event.candidate });
-      }
-    };
-
-    peerConnection.current.ontrack = (event) => {
-      console.log("📺 Received remote track:", event.track.kind);
-      const newStream = event.streams[0];
-      setRemoteStream(newStream);
-    };
-
-    peerConnection.current.oniceconnectionstatechange = () => {
-      const state = peerConnection.current.iceConnectionState;
-      console.log("🌐 ICE State Change:", state);
-      if (state === "connected" || state === "completed") setCallStatus("connected");
-      if (state === "failed" || state === "disconnected") setCallStatus("failed");
-    };
-
-    peerConnection.current.onconnectionstatechange = () => {
-      const state = peerConnection.current.connectionState;
-      console.log("🔌 Connection State Change:", state);
-      if (state === "connected") {
-        setCallStatus("connected");
-        applyMediaParameters(); // 💎 Optimize once connected
-      }
-      if (state === "failed" || state === "closed") {
-        setCallStatus("failed");
-      }
-    };
-
-    // Add local tracks
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        peerConnection.current.addTrack(track, localStream);
-      });
+  const restartIce = useCallback(async () => {
+    if (!peerConnection.current || !remoteUserId.current) return;
+    try {
+      console.log("🔄 Restarting ICE...");
+      const offer = await peerConnection.current.createOffer({ iceRestart: true });
+      await peerConnection.current.setLocalDescription(offer);
+      socket.emit("iceRestart", { to: remoteUserId.current, offer });
+    } catch (e) {
+      console.error("ICE Restart failed", e);
     }
+  }, []);
 
-    return peerConnection.current;
-  }, [localStream, applyMediaParameters]);
-
-  const getMedia = async () => {
+  const getMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
@@ -168,7 +147,68 @@ export const useCall = (userInfo, initialData) => {
         throw err;
       }
     }
-  };
+  }, []);
+
+  const initPeerConnection = useCallback(async (targetUserId) => {
+    console.log("🏗️ Initializing PeerConnection for:", targetUserId);
+    remoteUserId.current = targetUserId;
+    
+    peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+
+    peerConnection.current.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("iceCandidate", { to: targetUserId, candidate: event.candidate });
+      }
+    };
+
+    peerConnection.current.ontrack = (event) => {
+      console.log("📺 Received remote track:", event.track.kind);
+      const newStream = event.streams[0];
+      setRemoteStream(newStream);
+    };
+
+    peerConnection.current.oniceconnectionstatechange = () => {
+      const state = peerConnection.current.iceConnectionState;
+      console.log("🌐 ICE State Change:", state);
+      if (state === "connected" || state === "completed") {
+        setCallStatus("connected");
+      }
+      if (state === "failed") {
+        console.warn("⚠️ ICE Connection Failed. Attempting restart...");
+        restartIce();
+      }
+      if (state === "disconnected") {
+        setCallStatus("failed");
+      }
+    };
+
+    peerConnection.current.onconnectionstatechange = () => {
+      const state = peerConnection.current.connectionState;
+      console.log("🔌 Connection State Change:", state);
+      if (state === "connected") {
+        setCallStatus("connected");
+        applyMediaParameters(); 
+      }
+      if (state === "failed") {
+        setCallStatus("failed");
+        console.error("❌ PEER CONNECTION FAILED");
+      }
+      if (state === "closed") {
+        setCallStatus("idle");
+      }
+    };
+
+    // Add local tracks
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        peerConnection.current.addTrack(track, localStream);
+      });
+    }
+
+    return peerConnection.current;
+  }, [localStream, applyMediaParameters, restartIce]);
+
+
 
   // --- Actions ---
   const startCall = useCallback(async (user) => {
@@ -190,7 +230,7 @@ export const useCall = (userInfo, initialData) => {
       console.error("Call initialization failed", err);
       cleanup();
     }
-  }, [userInfo, initPeerConnection, cleanup]);
+  }, [userInfo, initPeerConnection, cleanup, getMedia]);
 
   const acceptCall = useCallback(async (data) => {
     setCallStatus("connecting");
@@ -211,7 +251,7 @@ export const useCall = (userInfo, initialData) => {
       console.error("Failed to accept call", err);
       cleanup();
     }
-  }, [initPeerConnection, cleanup]);
+  }, [initPeerConnection, cleanup, getMedia, flushIceQueue]);
 
   const endCall = useCallback(() => {
     if (remoteUserId.current) {
@@ -266,27 +306,105 @@ export const useCall = (userInfo, initialData) => {
     } catch (err) { console.error(err); }
   };
 
-  const startRecording = () => {
-    const streamToRecord = remoteStream || localStream;
-    if (!streamToRecord) return;
+  const startRecording = async () => {
+    if (!localStream) return;
     
-    const recorder = new MediaRecorder(streamToRecord);
-    mediaRecorder.current = recorder;
-    let chunks = [];
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `SkillSwap_${new Date().getTime()}.webm`; a.click();
-    };
-    recorder.start();
-    setIsRecording(true);
+    console.log("🎬 Starting merged recording...");
+    try {
+      // 1. Setup Audio Mixing
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const dest = audioCtx.createMediaStreamDestination();
+      
+      const localSource = audioCtx.createMediaStreamSource(localStream);
+      localSource.connect(dest);
+      
+      if (remoteStream) {
+        const remoteSource = audioCtx.createMediaStreamSource(remoteStream);
+        remoteSource.connect(dest);
+      }
+      
+      // 2. Setup Video Composition (PIP)
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext("2d");
+      
+      const videoLocal = document.createElement("video");
+      videoLocal.srcObject = localStream;
+      videoLocal.muted = true;
+      await videoLocal.play();
+      
+      let videoRemote = null;
+      if (remoteStream) {
+        videoRemote = document.createElement("video");
+        videoRemote.srcObject = remoteStream;
+        videoRemote.muted = true;
+        await videoRemote.play();
+      }
+      
+      const draw = () => {
+        if (!isRecording && !mediaRecorder.current) return;
+        
+        // Background (Remote or Black)
+        if (videoRemote) {
+          ctx.drawImage(videoRemote, 0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        // PIP (Local) - Bottom Right
+        const pipW = 320;
+        const pipH = 180;
+        const margin = 20;
+        ctx.strokeStyle = "rgba(255,255,255,0.2)";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(canvas.width - pipW - margin, canvas.height - pipH - margin, pipW, pipH);
+        ctx.drawImage(videoLocal, canvas.width - pipW - margin, canvas.height - pipH - margin, pipW, pipH);
+        
+        requestAnimationFrame(draw);
+      };
+      
+      setIsRecording(true);
+      draw();
+      
+      // 3. Combine and Record
+      const canvasStream = canvas.captureStream(30);
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks()
+      ]);
+      
+      const recorder = new MediaRecorder(combinedStream, { mimeType: "video/webm;codecs=vp9,opus" });
+      mediaRecorder.current = recorder;
+      let chunks = [];
+      
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `SkillSwap_Call_${new Date().toISOString()}.webm`;
+        a.click();
+        
+        // Cleanup canvas resources
+        videoLocal.pause();
+        if (videoRemote) videoRemote.pause();
+        audioCtx.close();
+      };
+      
+      recorder.start();
+    } catch (err) {
+      console.error("Recording failed", err);
+      setIsRecording(false);
+    }
   };
 
   const stopRecording = () => {
     if (mediaRecorder.current) {
       mediaRecorder.current.stop();
+      mediaRecorder.current = null;
       setIsRecording(false);
     }
   };
@@ -337,11 +455,22 @@ export const useCall = (userInfo, initialData) => {
       navigate("/chat");
     };
 
+    const handleIceRestart = async ({ offer }) => {
+      if (peerConnection.current) {
+        console.log("🔄 Handling ICE Restart Request");
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerConnection.current.createAnswer();
+        await peerConnection.current.setLocalDescription(answer);
+        socket.emit("acceptCall", { to: remoteUserId.current, answer });
+      }
+    };
+
     socket.on("incomingCall", handleIncomingCall);
     socket.on("callAccepted", handleCallAccepted);
     socket.on("iceCandidate", handleIceCandidate);
     socket.on("callRejected", handleCallRejected);
     socket.on("callEnded", handleCallEnded);
+    socket.on("iceRestart", handleIceRestart);
 
     return () => {
       socket.off("incomingCall", handleIncomingCall);
@@ -349,8 +478,9 @@ export const useCall = (userInfo, initialData) => {
       socket.off("iceCandidate", handleIceCandidate);
       socket.off("callRejected", handleCallRejected);
       socket.off("callEnded", handleCallEnded);
+      socket.off("iceRestart", handleIceRestart);
     };
-  }, [userInfo?._id, callStatus, cleanup, navigate]);
+  }, [userInfo?._id, callStatus, cleanup, navigate, flushIceQueue]);
 
   return {
     callStatus,
