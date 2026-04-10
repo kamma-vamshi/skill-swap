@@ -63,6 +63,27 @@ html {
   border: 1px solid rgba(255, 255, 255, 0.03);
 }
 
+.glass-premium {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.82);
+}
+
+.glow-glow {
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.4);
+}
+
+.pulsate-red {
+  animation: pulsate 1.5s infinite;
+}
+
+@keyframes pulsate {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 /* ================= CARD ================= */
 
 .card {
@@ -153,4 +174,4 @@ html {
 
 .status.rejected {
   @apply bg-red-500/10 text-red-500 border border-red-500/20;
-}
+}
