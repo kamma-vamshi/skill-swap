@@ -62,13 +62,16 @@ const NotificationManager = ({ children }) => {
     const handleIncomingCall = (data) => {
       console.log("☎️ SIGNAL RECEIVED: incomingCall", data);
 
-      // 👻 GHOST CALL PREVENTION: Reject stale signals (> 30s)
+      // 👻 GHOST CALL PREVENTION: Reject stale signals (> 8s)
       const now = Date.now();
       const sentAt = data.sentAt || 0;
-      if (sentAt && now - sentAt > 30000) {
-        console.warn("🚫 Ignoring stale ghost call signal (30s old)");
+      if (sentAt && now - sentAt > 8000) {
+        console.warn("🚫 Ignoring stale ghost call signal (8s+ old)");
         return;
       }
+
+      // ✅ ACKNOWLEDGE reception to tell the caller we are "Ringing"
+      socket.emit("callAcknowledge", { to: data.from, callId: data.callId });
 
       if (locationRef.current.pathname === "/call") return;
 
