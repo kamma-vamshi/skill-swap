@@ -12,10 +12,15 @@ const NotificationManager = ({ children }) => {
   const location = useLocation();
 
   const [incomingCall, setIncomingCall] = useState(null);
+  const locationRef = useRef(location);
   
   // Audio Refs
   const ringtoneRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_73145465e9.mp3"));
   const pingRef = useRef(new Audio("https://cdn.pixabay.com/audio/2021/08/04/audio_0625c1539c.mp3"));
+
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
 
   useEffect(() => {
     // Setup Audio
@@ -23,55 +28,60 @@ const NotificationManager = ({ children }) => {
     
     if (!userInfo?._id) return;
 
+    // 🚀 STABILIZATION: Join room once on mount/auth
+    console.log(`📡 Signaling initialized for user: ${userInfo._id}`);
     socket.emit("join", userInfo._id);
 
     // 📩 MESSAGE NOTIFICATION
-    socket.on("receiveMessage", (msg) => {
-      // Don't ping if already in that specific chat
-      const isChattingWithUser = location.pathname === "/chat"; 
-      
-      if (!isChattingWithUser) {
-        pingRef.current.play().catch(e => console.log("Audio play blocked"));
-        toast(`${msg.senderName || "New Message"}: ${msg.text.substring(0, 30)}${msg.text.length > 30 ? '...' : ''}`, {
+    const handleMessage = (msg) => {
+      const isInChat = locationRef.current.pathname === "/chat"; 
+      if (!isInChat) {
+        pingRef.current.play().catch(() => {});
+        toast(`${msg.senderName || "New Message"}: ${msg.text.substring(0, 30)}...`, {
           icon: <FiMessageCircle className="text-purple-500" />,
-          duration: 4000,
           onClick: () => navigate("/chat"),
         });
       }
-    });
+    };
 
     // 🤝 SWAP REQUEST NOTIFICATION
-    socket.on("swap_request", (swap) => {
-      pingRef.current.play().catch(e => console.log("Audio play blocked"));
+    const handleSwapRequest = (swap) => {
+      pingRef.current.play().catch(() => {});
       toast(`New Swap Request from ${swap.senderName || "someone"}!`, {
         icon: <FiZap className="text-yellow-500" />,
-        duration: 5000,
         onClick: () => navigate("/swaps"),
       });
-    });
+    };
 
     // 📞 GLOBAL INCOMING CALL
-    socket.on("incomingCall", (data) => {
-      // If we're already on the call page, the Call component handles it
-      if (location.pathname === "/call") return;
+    const handleIncomingCall = (data) => {
+      console.log("☎️ SIGNAL RECEIVED: incomingCall", data);
+      if (locationRef.current.pathname === "/call") return;
 
       setIncomingCall(data);
-      ringtoneRef.current.play().catch(e => console.log("Audio play blocked (interaction required)"));
-    });
+      ringtoneRef.current.play().catch(() => console.warn("Ringtone blocked"));
+    };
 
-    socket.on("callEnded", () => {
+    const handleCallEnded = () => {
+      console.log("☎️ SIGNAL RECEIVED: callEnded");
       setIncomingCall(null);
       ringtoneRef.current.pause();
       ringtoneRef.current.currentTime = 0;
-    });
+    };
+
+    socket.on("receiveMessage", handleMessage);
+    socket.on("swap_request", handleSwapRequest);
+    socket.on("incomingCall", handleIncomingCall);
+    socket.on("callEnded", handleCallEnded);
 
     return () => {
-      socket.off("receiveMessage");
-      socket.off("swap_request");
-      socket.off("incomingCall");
-      socket.off("callEnded");
+      console.log("🧹 Cleaning up signaling listeners");
+      socket.off("receiveMessage", handleMessage);
+      socket.off("swap_request", handleSwapRequest);
+      socket.off("incomingCall", handleIncomingCall);
+      socket.off("callEnded", handleCallEnded);
     };
-  }, [userInfo?._id, location.pathname, navigate]);
+  }, [userInfo?._id, navigate]);
 
   const acceptCall = () => {
     ringtoneRef.current.pause();
