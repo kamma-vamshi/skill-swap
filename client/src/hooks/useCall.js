@@ -3,44 +3,20 @@ import socket from "../services/socket";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 
-const getIceServers = () => {
-  const servers = [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
-    { urls: "stun:global.stun.twilio.com:3478" },
-    { urls: "stun:stun.l.google.com:19305" },
-    { urls: "stun:stun.services.mozilla.com" },
-  ];
-
-  if (process.env.REACT_APP_TURN_URL) {
-    servers.push({
-      urls: process.env.REACT_APP_TURN_URL,
-      username: process.env.REACT_APP_TURN_USERNAME,
-      credential: process.env.REACT_APP_TURN_PASSWORD,
-    });
-  }
-
-  return {
-    iceServers: servers,
-    iceCandidatePoolSize: 10,
-    iceTransportPolicy: "all",
-  };
-};
-
-const ICE_SERVERS = getIceServers();
+// Securely fetch from backend
+const DEFAULT_STUN = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 export const useCall = (userInfo, initialData) => {
   const navigate = useNavigate();
   
   // --- Refs ---
   const peerConnection = useRef(null);
+  const iceServersRef = useRef(DEFAULT_STUN);
   const iceQueue = useRef([]);
   const mediaRecorder = useRef(null);
   const remoteUserId = useRef(null);
   const currentCallId = useRef(initialData?.incomingCallData?.callId || null);
+  const callTimeoutRef = useRef(null);
 
   // --- State ---
   const [localStream, setLocalStream] = useState(null);
@@ -106,7 +82,7 @@ export const useCall = (userInfo, initialData) => {
 
   const initPeerConnection = useCallback(async (targetId) => {
     remoteUserId.current = targetId;
-    peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+    peerConnection.current = new RTCPeerConnection(iceServersRef.current);
 
     peerConnection.current.onicecandidate = (e) => {
       if (e.candidate) {
@@ -131,6 +107,14 @@ export const useCall = (userInfo, initialData) => {
   }, [localStream, cleanup]);
 
   // --- Actions ---
+  const endCall = useCallback(() => {
+    if (remoteUserId.current && currentCallId.current) {
+      socket.emit("endCall", { to: remoteUserId.current, callId: currentCallId.current });
+    }
+    cleanup();
+    navigate("/chat");
+  }, [cleanup, navigate]);
+
   const startCall = useCallback(async (user) => {
     const callId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     currentCallId.current = callId;
@@ -144,10 +128,20 @@ export const useCall = (userInfo, initialData) => {
       await pc.setLocalDescription(offer);
 
       socket.emit("callUser", { to: user._id, from: userInfo._id, callerName: userInfo.name, offer, callId });
+
+      // 🕒 HANDSHAKE TIMEOUT: Fail if no ringing/accept within 10s
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = setTimeout(() => {
+        if (callStatus === "calling" || callStatus === "connecting") {
+          toast.error("Contact is busy or unavailable (Timeout)");
+          endCall();
+        }
+      }, 10000);
+
     } catch (e) {
       cleanup();
     }
-  }, [userInfo, getMedia, initPeerConnection, cleanup]);
+  }, [userInfo, getMedia, initPeerConnection, cleanup, callStatus, endCall]);
 
   const acceptCall = useCallback(async (data) => {
     currentCallId.current = data.callId;
@@ -166,13 +160,6 @@ export const useCall = (userInfo, initialData) => {
     }
   }, [getMedia, initPeerConnection, flushIceQueue, cleanup]);
 
-  const endCall = useCallback(() => {
-    if (remoteUserId.current && currentCallId.current) {
-      socket.emit("endCall", { to: remoteUserId.current, callId: currentCallId.current });
-    }
-    cleanup();
-    navigate("/chat");
-  }, [cleanup, navigate]);
 
   const toggleMic = () => {
     if (localStream) {
@@ -198,8 +185,20 @@ export const useCall = (userInfo, initialData) => {
   useEffect(() => {
     if (!userInfo?._id) return;
 
+    // 🔐 FETCH SECURE ICE CONFIG
+    socket.emit("getIceConfigs");
+    socket.on("iceConfigs", (data) => {
+      console.log("🔒 Secure ICE Servers Received");
+      iceServersRef.current = {
+        ...data,
+        iceCandidatePoolSize: 10,
+        iceTransportPolicy: "all"
+      };
+    });
+
     const handleCallAccepted = async (data) => {
       if (data.callId !== currentCallId.current) return;
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       if (peerConnection.current) {
         await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
         await flushIceQueue();
@@ -218,12 +217,14 @@ export const useCall = (userInfo, initialData) => {
 
     const handleCallRejected = (data) => {
       if (data.callId !== currentCallId.current) return;
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       toast.error(data.reason === "busy" ? "User is busy" : "Call rejected");
       cleanup();
     };
 
     const handleCallEnded = (data) => {
       if (data.callId !== currentCallId.current) return;
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       toast("Call ended");
       cleanup();
       navigate("/chat");
@@ -231,6 +232,7 @@ export const useCall = (userInfo, initialData) => {
 
     const handleCallRinging = (data) => {
       if (data.callId !== currentCallId.current) return;
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       setCallStatus("ringing");
     };
 
@@ -247,6 +249,8 @@ export const useCall = (userInfo, initialData) => {
     socket.on("callWaiting", handleCallWaiting);
 
     return () => {
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      socket.off("iceConfigs");
       socket.off("callAccepted", handleCallAccepted);
       socket.off("iceCandidate", handleIceCandidate);
       socket.off("callRejected", handleCallRejected);
