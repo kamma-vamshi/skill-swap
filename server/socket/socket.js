@@ -60,15 +60,43 @@ export const initSocket = (server) => {
       // 🚀 RESTORATIVE SIGNALING: Push pending calls on join
       if (pendingCalls.has(userId)) {
         const callData = pendingCalls.get(userId);
+        
+        // 🔍 VALIDATION: Only push if caller is STILL ONLINE and call is fresh
+        const callerSocketId = onlineUsers.get(callData.from);
         const age = Date.now() - callData.sentAt;
-        if (age < 15000) { // Only push if FRESH (< 15s)
-          console.log(`📡 Pushing pending call to ${userId} (Age: ${age}ms)`);
+        
+        if (callerSocketId && age < 15000) {
+          console.log(`📡 Pushing validated pending call to ${userId} (Age: ${age}ms)`);
           io.to(userId).emit("incomingCall", callData);
+        } else {
+          console.warn(`🗑️ Discarding invalid/stale pending call for ${userId}`);
         }
         pendingCalls.delete(userId);
       }
 
       io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+    });
+
+    // 🔐 SECURE ICE CONFIG: Serve TURN credentials from backend env
+    socket.on("getIceConfigs", () => {
+      const iceServers = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+      ];
+
+      if (process.env.TURN_URL) {
+        iceServers.push({
+          urls: [
+            `turns:${process.env.TURN_URL}:443?transport=tcp`,
+            `turn:${process.env.TURN_URL}:443`,
+            `turn:${process.env.TURN_URL}:80`,
+          ],
+          username: process.env.TURN_USERNAME,
+          credential: process.env.TURN_PASSWORD,
+        });
+      }
+
+      socket.emit("iceConfigs", { iceServers });
     });
 
     // ===============================
@@ -206,7 +234,10 @@ export const initSocket = (server) => {
       
       activeCalls.delete(currentUserId);
       activeCalls.delete(to);
+      
+      // Cleanup any parked signals regarding these users
       pendingCalls.delete(to);
+      pendingCalls.delete(currentUserId);
 
       io.to(to).emit("callEnded", { callId });
     });
@@ -321,6 +352,14 @@ export const initSocket = (server) => {
           io.to(partnerId).emit("callEnded");
           activeCalls.delete(partnerId);
           activeCalls.delete(currentUserId);
+        }
+
+        // 🗑️ Cleanup pending calls where this user was the CALLER
+        for (let [recipientId, signalData] of pendingCalls.entries()) {
+          if (signalData.from === currentUserId) {
+            console.log(`🗑️ Removing pending signal to ${recipientId} (Caller disconnected)`);
+            pendingCalls.delete(recipientId);
+          }
         }
 
         onlineUsers.delete(currentUserId);
