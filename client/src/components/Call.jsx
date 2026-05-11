@@ -83,11 +83,14 @@ const Call = () => {
   }, [callStatus]);
 
   // Handle Initial State from Location (Calling or Auto-Accepting)
+  const hasInitialized = useRef(false);
   useEffect(() => {
-    if (callStatus === "idle") {
+    if (callStatus === "idle" && !hasInitialized.current) {
       if (location.state?.autoCall && location.state?.selectedUser) {
+        hasInitialized.current = true;
         startCall(location.state.selectedUser);
       } else if (location.state?.autoAccept && location.state?.incomingCallData) {
+        hasInitialized.current = true;
         acceptCall(location.state.incomingCallData);
       }
     }
