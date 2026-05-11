@@ -5,6 +5,7 @@ import http from "http";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import mongoSanitize from "express-mongo-sanitize";
+import compression from "compression";
 
 import connectDB from "./config/db.js";
 import { initSocket } from "./socket/socket.js";
@@ -32,6 +33,7 @@ connectDB();
 
 // ✅ Middleware
 app.use(helmet()); // Security headers
+app.use(compression()); // Compress responses
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
