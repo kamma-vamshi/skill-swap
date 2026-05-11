@@ -93,6 +93,7 @@ export const useCall = (userInfo, initialData) => {
     peerConnection.current.ontrack = (e) => setRemoteStream(e.streams[0]);
 
     peerConnection.current.onconnectionstatechange = () => {
+      console.log(`📡 Peer Connection State: ${peerConnection.current.connectionState}`);
       if (peerConnection.current?.connectionState === "failed") {
         toast.error("Connection failed");
         cleanup();
