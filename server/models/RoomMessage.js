@@ -30,4 +30,7 @@ const roomMessageSchema = new mongoose.Schema(
   }
 );
 
+// Optimize querying messages for a specific classroom
+roomMessageSchema.index({ roomId: 1 });
+
 export default mongoose.model("RoomMessage", roomMessageSchema);
