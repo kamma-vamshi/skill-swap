@@ -175,10 +175,13 @@ export const initSocket = (server) => {
     socket.on("callUser", ({ to, from, callerName, offer, callId }) => {
       if (!to || !callId) return;
       const sentAt = Date.now();
-      console.log(`📞 Call Request [${callId}]: ${from} -> ${to}`);
+      console.log(`\n\n=== 📞 INCOMING CALL EVENT ===`);
+      console.log(`[callId: ${callId}]: ${from} -> ${to}`);
 
       const recipientRoom = io.sockets.adapter.rooms.get(to);
       const recipientCount = recipientRoom ? recipientRoom.size : 0;
+      
+      console.log(`🔍 Room Status for '${to}': count = ${recipientCount}`);
 
       // 🚨 BUSY CHECK
       if (activeCalls.has(to)) {
@@ -195,9 +198,11 @@ export const initSocket = (server) => {
         io.to(from).emit("callWaiting", { callId });
       } else {
         // ✅ Direct delivery
+        console.log(`🚀 DIRECT DELIVERY: emitting 'incomingCall' to room '${to}'`);
         io.to(to).emit("incomingCall", signalData);
         io.to(from).emit("callRinging", { callId });
       }
+      console.log(`==============================\n\n`);
     });
 
     socket.on("callAcknowledge", ({ to, callId }) => {
