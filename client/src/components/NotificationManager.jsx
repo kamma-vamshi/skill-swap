@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import socket from "../services/socket";
 import toast from "react-hot-toast";
