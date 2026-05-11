@@ -94,7 +94,7 @@ export const SocketProvider = ({ children }) => {
       socket.off("onlineUsers", handleOnlineUsers);
       socket.off("callRejected", handleCallRejected);
     };
-  }, [userInfo?._id, incomingCall?.callId]);
+  }, [userInfo?._id, userInfo?.name, incomingCall?.callId]);
 
   const value = {
     socket,
