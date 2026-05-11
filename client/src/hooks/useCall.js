@@ -7,7 +7,7 @@ const DEFAULT_STUN = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 export const useCall = (userInfo, initialData) => {
   const navigate = useNavigate();
-  const { socket, setIncomingCall, ringtone } = useSocket();
+  const { socket } = useSocket();
   
   // --- Refs ---
   const peerConnection = useRef(null);
@@ -189,6 +189,26 @@ export const useCall = (userInfo, initialData) => {
       cleanup();
     }
   }, [getMedia, initPeerConnection, flushIceQueue, cleanup, socket]);
+
+  const toggleMic = useCallback(() => {
+    if (localStream) {
+      const track = localStream.getAudioTracks()[0];
+      if (track) {
+        track.enabled = !micOn;
+        setMicOn(!micOn);
+      }
+    }
+  }, [localStream, micOn]);
+
+  const toggleCam = useCallback(() => {
+    if (localStream) {
+      const track = localStream.getVideoTracks()[0];
+      if (track) {
+        track.enabled = !camOn;
+        setCamOn(!camOn);
+      }
+    }
+  }, [localStream, camOn]);
 
   // --- Listeners ---
   useEffect(() => {
