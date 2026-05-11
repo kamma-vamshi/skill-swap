@@ -132,10 +132,11 @@ export const useCall = (userInfo, initialData) => {
       const offer = await pc.createOffer();
       if (currentCallId.current !== callId) return;
 
+      // 🔥 EMIT FIRST: Don't let setLocalDescription block the network signal!
+      socket.emit("callUser", { to: user._id, from: userInfo._id, callerName: userInfo.name, offer, callId });
+
       await pc.setLocalDescription(offer);
       if (currentCallId.current !== callId) return;
-
-      socket.emit("callUser", { to: user._id, from: userInfo._id, callerName: userInfo.name, offer, callId });
 
       // 🕒 HANDSHAKE TIMEOUT: Fail if no ringing/accept within 10s
       if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
