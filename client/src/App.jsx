@@ -45,110 +45,114 @@ const PublicRoute = ({ children }) => {
   return !userInfo ? children : <Navigate to="/dashboard" replace />;
 };
 
+import { SocketProvider } from "./context/SocketContext";
+
 // ================= APP =================
 function App() {
   return (
     <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID}>
       <Router>
         <AuthProvider>
-          <NotificationManager>
-            <Suspense fallback={<div className="h-screen flex items-center justify-center bg-black text-white">Loading...</div>}>
-              <Routes>
-              {/* ================= AUTH ================= */}
-              <Route
-                path="/login"
-                element={
-                  <PublicRoute>
-                    <Auth />
-                  </PublicRoute>
-                }
-              />
+          <SocketProvider>
+            <NotificationManager>
+              <Suspense fallback={<div className="h-screen flex items-center justify-center bg-black text-white">Loading...</div>}>
+                <Routes>
+                {/* ================= AUTH ================= */}
+                <Route
+                  path="/login"
+                  element={
+                    <PublicRoute>
+                      <Auth />
+                    </PublicRoute>
+                  }
+                />
 
-              {/* ================= PROTECTED ROUTES ================= */}
+                {/* ================= PROTECTED ROUTES ================= */}
 
-              <Route
-                path="/dashboard"
-                element={
-                  <PrivateRoute>
-                    <Dashboard />
-                  </PrivateRoute>
-                }
-              />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <PrivateRoute>
+                      <Dashboard />
+                    </PrivateRoute>
+                  }
+                />
 
-              <Route
-                path="/profile"
-                element={
-                  <PrivateRoute>
-                    <Profile />
-                  </PrivateRoute>
-                }
-              />
+                <Route
+                  path="/profile"
+                  element={
+                    <PrivateRoute>
+                      <Profile />
+                    </PrivateRoute>
+                  }
+                />
 
-              <Route
-                path="/marketplace"
-                element={
-                  <PrivateRoute>
-                    <Marketplace />
-                  </PrivateRoute>
-                }
-              />
+                <Route
+                  path="/marketplace"
+                  element={
+                    <PrivateRoute>
+                      <Marketplace />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= SWAPS ================= */}
-              <Route
-                path="/swaps"
-                element={
-                  <PrivateRoute>
-                    <SwapRequests />
-                  </PrivateRoute>
-                }
-              />
+                {/* ================= SWAPS ================= */}
+                <Route
+                  path="/swaps"
+                  element={
+                    <PrivateRoute>
+                      <SwapRequests />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= CHAT ================= */}
-              <Route
-                path="/chat"
-                element={
-                  <PrivateRoute>
-                    <ChatPage />
-                  </PrivateRoute>
-                }
-              />
+                {/* ================= CHAT ================= */}
+                <Route
+                  path="/chat"
+                  element={
+                    <PrivateRoute>
+                      <ChatPage />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= 🔥 VIDEO CALL ================= */}
-              <Route
-                path="/call"
-                element={
-                  <PrivateRoute>
-                    <Call />
-                  </PrivateRoute>
-                }
-              />
+                {/* ================= 🔥 VIDEO CALL ================= */}
+                <Route
+                  path="/call"
+                  element={
+                    <PrivateRoute>
+                      <Call />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= 🔥 GROUP CALL ================= */}
-              <Route
-                path="/group-call"
-                element={
-                  <PrivateRoute>
-                    <GroupCall roomId="skillswap-room" />
-                  </PrivateRoute>
-                }
-              />
+                {/* ================= 🔥 GROUP CALL ================= */}
+                <Route
+                  path="/group-call"
+                  element={
+                    <PrivateRoute>
+                      <GroupCall roomId="skillswap-room" />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= 🏫 SWAP CLASSROOM ================= */}
-              <Route
-                path="/swap-room/:id"
-                element={
-                  <PrivateRoute>
-                    <SwapRoom />
-                  </PrivateRoute>
-                }
-              />
+                {/* ================= 🏫 SWAP CLASSROOM ================= */}
+                <Route
+                  path="/swap-room/:id"
+                  element={
+                    <PrivateRoute>
+                      <SwapRoom />
+                    </PrivateRoute>
+                  }
+                />
 
-              {/* ================= DEFAULT ================= */}
-              <Route path="*" element={<Navigate to="/login" />} />
+                {/* ================= DEFAULT ================= */}
+                <Route path="*" element={<Navigate to="/login" />} />
 
-            </Routes>
-            </Suspense>
-          </NotificationManager>
+              </Routes>
+              </Suspense>
+            </NotificationManager>
+          </SocketProvider>
         </AuthProvider>
       </Router>
     </GoogleOAuthProvider>
