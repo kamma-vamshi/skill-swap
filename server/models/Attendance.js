@@ -27,5 +27,7 @@ const attendanceSchema = new mongoose.Schema(
   }
 );
 
+// Prevent duplicate attendance records for the same user on the same day in the same room
+attendanceSchema.index({ roomId: 1, userId: 1, date: 1 }, { unique: true });
+
 export default mongoose.model("Attendance", attendanceSchema);
-s
