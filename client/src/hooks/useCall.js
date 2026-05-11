@@ -123,9 +123,16 @@ export const useCall = (userInfo, initialData) => {
 
     try {
       await getMedia();
+      if (currentCallId.current !== callId) return;
+
       const pc = await initPeerConnection(user._id);
+      if (currentCallId.current !== callId) return;
+
       const offer = await pc.createOffer();
+      if (currentCallId.current !== callId) return;
+
       await pc.setLocalDescription(offer);
+      if (currentCallId.current !== callId) return;
 
       socket.emit("callUser", { to: user._id, from: userInfo._id, callerName: userInfo.name, offer, callId });
 
@@ -148,11 +155,21 @@ export const useCall = (userInfo, initialData) => {
     setCallStatus("connecting");
     try {
       await getMedia();
+      if (currentCallId.current !== data.callId) return;
+
       const pc = await initPeerConnection(data.from);
+      if (currentCallId.current !== data.callId) return;
+
       await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
       await flushIceQueue();
+      if (currentCallId.current !== data.callId) return;
+
       const answer = await pc.createAnswer();
+      if (currentCallId.current !== data.callId) return;
+
       await pc.setLocalDescription(answer);
+      if (currentCallId.current !== data.callId) return;
+
       socket.emit("acceptCall", { to: data.from, answer, callId: data.callId });
       setCallStatus("connected");
     } catch (e) {
