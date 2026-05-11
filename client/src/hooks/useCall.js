@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import socket from "../services/socket";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
+import { useSocket } from "../context/SocketContext";
 
-// Securely fetch from backend
 const DEFAULT_STUN = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 export const useCall = (userInfo, initialData) => {
   const navigate = useNavigate();
+  const { socket, setIncomingCall, ringtone } = useSocket();
   
   // --- Refs ---
   const peerConnection = useRef(null);
@@ -18,13 +18,22 @@ export const useCall = (userInfo, initialData) => {
   const currentCallId = useRef(initialData?.incomingCallData?.callId || null);
   const callTimeoutRef = useRef(null);
 
+  // Status ref to prevent stale state bugs in timeouts/listeners
+  const statusRef = useRef(
+    initialData?.incomingCallData ? "incoming" : 
+    (initialData?.selectedUser && initialData?.autoCall) ? "calling" : "idle"
+  );
+
   // --- State ---
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
-  const [callStatus, setCallStatus] = useState(
-    initialData?.incomingCallData ? "incoming" : 
-    (initialData?.selectedUser && initialData?.autoCall) ? "calling" : "idle"
-  ); 
+  const [callStatus, _setCallStatus] = useState(statusRef.current); 
+
+  const setCallStatus = (status) => {
+    statusRef.current = status;
+    _setCallStatus(status);
+  };
+
   const [incomingCallData, setIncomingCallData] = useState(initialData?.incomingCallData || null);
   const [partnerInfo, setPartnerInfo] = useState(initialData?.selectedUser || null);
   const [micOn, setMicOn] = useState(true);
@@ -34,27 +43,26 @@ export const useCall = (userInfo, initialData) => {
 
   // --- Cleanup ---
   const cleanup = useCallback(() => {
-    console.log(`🧹 Cleaning Session [${currentCallId.current}]`);
+    const cid = currentCallId.current;
+    console.log(`🧹 [CLEANUP] Session ${cid}`);
+
     if (peerConnection.current) {
       peerConnection.current.close();
       peerConnection.current = null;
     }
     if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
+      localStream.getTracks().forEach(t => t.stop());
       setLocalStream(null);
     }
-    if (remoteStream) {
-      remoteStream.getTracks().forEach((track) => track.stop());
-      setRemoteStream(null);
-    }
+    setRemoteStream(null);
     iceQueue.current = [];
     currentCallId.current = null;
     setCallStatus("idle");
     setIncomingCallData(null);
     setPartnerInfo(null);
-    setIsRecording(false);
-    setIsScreenSharing(false);
-  }, [localStream, remoteStream]);
+    
+    if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+  }, [localStream]);
 
   const flushIceQueue = useCallback(async () => {
     if (!peerConnection.current || !peerConnection.current.remoteDescription) return;
@@ -81,31 +89,31 @@ export const useCall = (userInfo, initialData) => {
   }, []);
 
   const initPeerConnection = useCallback(async (targetId) => {
+    console.log("🏗️ Initializing PeerConnection for:", targetId);
     remoteUserId.current = targetId;
     peerConnection.current = new RTCPeerConnection(iceServersRef.current);
 
     peerConnection.current.onicecandidate = (e) => {
-      if (e.candidate) {
+      if (e.candidate && currentCallId.current) {
         socket.emit("iceCandidate", { to: targetId, candidate: e.candidate, callId: currentCallId.current });
       }
     };
 
-    peerConnection.current.ontrack = (e) => setRemoteStream(e.streams[0]);
+    peerConnection.current.ontrack = (e) => {
+      console.log("📺 Remote track received");
+      setRemoteStream(e.streams[0]);
+    };
 
     peerConnection.current.onconnectionstatechange = () => {
-      console.log(`📡 Peer Connection State: ${peerConnection.current.connectionState}`);
+      console.log(`📡 Connection State: ${peerConnection.current?.connectionState}`);
       if (peerConnection.current?.connectionState === "failed") {
         toast.error("Connection failed");
         cleanup();
       }
     };
 
-    if (localStream) {
-      localStream.getTracks().forEach(t => peerConnection.current.addTrack(t, localStream));
-    }
-
     return peerConnection.current;
-  }, [localStream, cleanup]);
+  }, [socket, cleanup]);
 
   // --- Actions ---
   const endCall = useCallback(() => {
@@ -114,110 +122,90 @@ export const useCall = (userInfo, initialData) => {
     }
     cleanup();
     navigate("/chat");
-  }, [cleanup, navigate]);
+  }, [socket, cleanup, navigate]);
 
   const startCall = useCallback(async (user) => {
     const callId = `c_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    console.log(`🚀 Starting Call ${callId} to ${user.name}`);
+    
     currentCallId.current = callId;
     setPartnerInfo(user);
     setCallStatus("calling");
 
     try {
-      await getMedia();
+      const stream = await getMedia();
       if (currentCallId.current !== callId) return;
 
       const pc = await initPeerConnection(user._id);
-      if (currentCallId.current !== callId) return;
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
       const offer = await pc.createOffer();
       if (currentCallId.current !== callId) return;
 
-      // 🔥 EMIT FIRST: Don't let setLocalDescription block the network signal!
+      await pc.setLocalDescription(offer);
+      console.log("📡 Offer set and emitting callUser...");
+
+      // Final check before emission
+      if (currentCallId.current !== callId) return;
       socket.emit("callUser", { to: user._id, from: userInfo._id, callerName: userInfo.name, offer, callId });
 
-      await pc.setLocalDescription(offer);
-      if (currentCallId.current !== callId) return;
-
-      // 🕒 HANDSHAKE TIMEOUT: Fail if no ringing/accept within 10s
+      // 🕒 HANDSHAKE TIMEOUT
       if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = setTimeout(() => {
-        if (callStatus === "calling" || callStatus === "connecting") {
-          toast.error("Contact is busy or unavailable (Timeout)");
+        if (statusRef.current === "calling" || statusRef.current === "connecting") {
+          toast.error("No answer from contact");
           endCall();
         }
-      }, 10000);
+      }, 15000);
 
     } catch (e) {
+      console.error("Call Start Error:", e);
       cleanup();
     }
-  }, [userInfo, getMedia, initPeerConnection, cleanup, callStatus, endCall]);
+  }, [userInfo, getMedia, initPeerConnection, cleanup, endCall, socket]);
 
   const acceptCall = useCallback(async (data) => {
+    console.log("✅ Accepting Call:", data.callId);
     currentCallId.current = data.callId;
     setCallStatus("connecting");
+    
     try {
-      await getMedia();
+      const stream = await getMedia();
       if (currentCallId.current !== data.callId) return;
 
       const pc = await initPeerConnection(data.from);
-      if (currentCallId.current !== data.callId) return;
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
       await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
       await flushIceQueue();
-      if (currentCallId.current !== data.callId) return;
 
       const answer = await pc.createAnswer();
-      if (currentCallId.current !== data.callId) return;
-
       await pc.setLocalDescription(answer);
-      if (currentCallId.current !== data.callId) return;
 
       socket.emit("acceptCall", { to: data.from, answer, callId: data.callId });
       setCallStatus("connected");
     } catch (e) {
+      console.error("Accept Call Error:", e);
       cleanup();
     }
-  }, [getMedia, initPeerConnection, flushIceQueue, cleanup]);
-
-
-  const toggleMic = () => {
-    if (localStream) {
-      const track = localStream.getAudioTracks()[0];
-      if (track) {
-        track.enabled = !micOn;
-        setMicOn(!micOn);
-      }
-    }
-  };
-
-  const toggleCam = () => {
-    if (localStream) {
-      const track = localStream.getVideoTracks()[0];
-      if (track) {
-        track.enabled = !camOn;
-        setCamOn(!camOn);
-      }
-    }
-  };
+  }, [getMedia, initPeerConnection, flushIceQueue, cleanup, socket]);
 
   // --- Listeners ---
   useEffect(() => {
     if (!userInfo?._id) return;
 
-    // 🔐 FETCH SECURE ICE CONFIG
     socket.emit("getIceConfigs");
-    socket.on("iceConfigs", (data) => {
-      console.log("🔒 Secure ICE Servers Received");
-      iceServersRef.current = {
-        ...data,
-        iceCandidatePoolSize: 10,
-        iceTransportPolicy: "all"
-      };
-    });
+    
+    const handleIceConfigs = (data) => {
+      console.log("🔒 ICE Servers Updated");
+      iceServersRef.current = { ...data, iceCandidatePoolSize: 10 };
+    };
 
     const handleCallAccepted = async (data) => {
       if (data.callId !== currentCallId.current) return;
+      console.log("🤝 Call Accepted by Peer");
       if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      
       if (peerConnection.current) {
         await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
         await flushIceQueue();
@@ -236,14 +224,12 @@ export const useCall = (userInfo, initialData) => {
 
     const handleCallRejected = (data) => {
       if (data.callId !== currentCallId.current) return;
-      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       toast.error(data.reason === "busy" ? "User is busy" : "Call rejected");
       cleanup();
     };
 
-    const handleCallEnded = (data) => {
+    const handleCallEndedSignal = (data) => {
       if (data.callId !== currentCallId.current) return;
-      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       toast("Call ended");
       cleanup();
       navigate("/chat");
@@ -251,6 +237,7 @@ export const useCall = (userInfo, initialData) => {
 
     const handleCallRinging = (data) => {
       if (data.callId !== currentCallId.current) return;
+      console.log("🔔 Peer is ringing...");
       if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       setCallStatus("ringing");
     };
@@ -260,24 +247,24 @@ export const useCall = (userInfo, initialData) => {
       setCallStatus("connecting");
     };
 
+    socket.on("iceConfigs", handleIceConfigs);
     socket.on("callAccepted", handleCallAccepted);
     socket.on("iceCandidate", handleIceCandidate);
     socket.on("callRejected", handleCallRejected);
-    socket.on("callEnded", handleCallEnded);
+    socket.on("callEnded", handleCallEndedSignal);
     socket.on("callRinging", handleCallRinging);
     socket.on("callWaiting", handleCallWaiting);
 
     return () => {
-      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
-      socket.off("iceConfigs");
+      socket.off("iceConfigs", handleIceConfigs);
       socket.off("callAccepted", handleCallAccepted);
       socket.off("iceCandidate", handleIceCandidate);
       socket.off("callRejected", handleCallRejected);
-      socket.off("callEnded", handleCallEnded);
+      socket.off("callEnded", handleCallEndedSignal);
       socket.off("callRinging", handleCallRinging);
       socket.off("callWaiting", handleCallWaiting);
     };
-  }, [userInfo?._id, cleanup, navigate, flushIceQueue]);
+  }, [userInfo?._id, cleanup, navigate, flushIceQueue, socket]);
 
   return {
     callStatus, partnerInfo, incomingCallData, localStream, remoteStream,
