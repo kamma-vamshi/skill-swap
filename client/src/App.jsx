@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { SocketProvider } from "./context/SocketContext";
 
 import React, { Suspense } from "react";
 import Auth from "./pages/Auth";
@@ -45,7 +46,6 @@ const PublicRoute = ({ children }) => {
   return !userInfo ? children : <Navigate to="/dashboard" replace />;
 };
 
-import { SocketProvider } from "./context/SocketContext";
 
 // ================= APP =================
 function App() {
