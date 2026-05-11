@@ -116,7 +116,7 @@ const NotificationManager = ({ children }) => {
   const rejectCall = () => {
     ringtoneRef.current.pause();
     ringtoneRef.current.currentTime = 0;
-    socket.emit("rejectCall", { to: incomingCall.from });
+    socket.emit("rejectCall", { to: incomingCall.from, callId: incomingCall.callId });
     setIncomingCall(null);
   };
 
