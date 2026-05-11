@@ -65,8 +65,7 @@ const NotificationManager = ({ children }) => {
       // ✅ ACKNOWLEDGE reception to tell the caller we are "Ringing"
       socket.emit("callAcknowledge", { to: data.from, callId: data.callId });
 
-      if (locationRef.current.pathname === "/call") return;
-
+      // FORCE State Update
       setIncomingCall(data);
       ringtoneRef.current.play().catch(() => console.warn("Ringtone blocked"));
     };
