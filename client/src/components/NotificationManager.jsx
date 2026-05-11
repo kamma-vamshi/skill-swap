@@ -6,16 +6,15 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { FiPhoneCall, FiX, FiMessageCircle, FiZap, FiPhone } from "react-icons/fi";
 
+import { useSocket } from "../context/SocketContext";
+
 const NotificationManager = ({ children }) => {
   const { userInfo } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { incomingCall, setIncomingCall, ringtone } = useSocket();
 
-  const [incomingCall, setIncomingCall] = useState(null);
   const locationRef = useRef(location);
-  
-  // Audio Refs
-  const ringtoneRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_73145465e9.mp3"));
   const pingRef = useRef(new Audio("https://cdn.pixabay.com/audio/2021/08/04/audio_0625c1539c.mp3"));
 
   useEffect(() => {
@@ -23,19 +22,7 @@ const NotificationManager = ({ children }) => {
   }, [location]);
 
   useEffect(() => {
-    // Setup Audio
-    ringtoneRef.current.loop = true;
-    
     if (!userInfo?._id) return;
-
-    // 🚀 PERSISTENCE: Re-join room on every connection (handles jitters/sleep)
-    const handleConnect = () => {
-      console.log(`🔌 Socket Connected: Re-joining room ${userInfo._id}`);
-      socket.emit("join", userInfo._id);
-    };
-
-    if (socket.connected) handleConnect();
-    socket.on("connect", handleConnect);
 
     // 📩 MESSAGE NOTIFICATION
     const handleMessage = (msg) => {
@@ -58,42 +45,18 @@ const NotificationManager = ({ children }) => {
       });
     };
 
-    // 📞 GLOBAL INCOMING CALL
-    const handleIncomingCall = (data) => {
-      console.log("☎️ SIGNAL RECEIVED: incomingCall", data);
-
-      // ✅ ACKNOWLEDGE reception to tell the caller we are "Ringing"
-      socket.emit("callAcknowledge", { to: data.from, callId: data.callId });
-
-      // FORCE State Update
-      setIncomingCall(data);
-      ringtoneRef.current.play().catch(() => console.warn("Ringtone blocked"));
-    };
-
-    const handleCallEnded = () => {
-      console.log("☎️ SIGNAL RECEIVED: callEnded");
-      setIncomingCall(null);
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    };
-
     socket.on("receiveMessage", handleMessage);
     socket.on("swap_request", handleSwapRequest);
-    socket.on("incomingCall", handleIncomingCall);
-    socket.on("callEnded", handleCallEnded);
 
     return () => {
-      console.log("🧹 Cleaning up signaling listeners");
       socket.off("receiveMessage", handleMessage);
       socket.off("swap_request", handleSwapRequest);
-      socket.off("incomingCall", handleIncomingCall);
-      socket.off("callEnded", handleCallEnded);
     };
   }, [userInfo?._id, navigate]);
 
   const acceptCall = () => {
-    ringtoneRef.current.pause();
-    ringtoneRef.current.currentTime = 0;
+    ringtone.pause();
+    ringtone.currentTime = 0;
     const callData = incomingCall;
     setIncomingCall(null);
     navigate("/call", { 
@@ -105,8 +68,8 @@ const NotificationManager = ({ children }) => {
   };
 
   const rejectCall = () => {
-    ringtoneRef.current.pause();
-    ringtoneRef.current.currentTime = 0;
+    ringtone.pause();
+    ringtone.currentTime = 0;
     socket.emit("rejectCall", { to: incomingCall.from, callId: incomingCall.callId });
     setIncomingCall(null);
   };
