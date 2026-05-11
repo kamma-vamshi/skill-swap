@@ -39,22 +39,31 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(mongoSanitize()); // NoSQL Injection protection (After body parsing)
 
-// ✅ Rate Limiting
-const limiter = rateLimit({
+// ✅ Rate Limiting (Strict for Auth, Relaxed for General API)
+const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per window
+  max: 15, // Strict limit for auth routes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many login/register attempts. Please try again later.",
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // Relaxed limit for general usage
   standardHeaders: true,
   legacyHeaders: false,
   message: "Too many requests from this IP, please try again after 15 minutes",
 });
-app.use("/api/", limiter);
+
+app.use("/api/", apiLimiter);
 
 // ✅ Routes
 app.get("/", (req, res) => {
   res.send("SkillSwap API running...");
 });
 
-app.use("/api/auth", authRoutes);
+app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/users", userRoutes); // ✅ FIXED
 app.use("/api/swaps", swapRoutes);
 app.use("/api/chat", chatRoutes);
