@@ -30,7 +30,7 @@ export const initSocket = (server) => {
   // 🔐 Authentication Middleware (Loosened to allow initial connection)
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
-    
+
     // If no token, allow connection but without .user property
     if (!token) return next();
 
@@ -60,11 +60,11 @@ export const initSocket = (server) => {
       // 🚀 RESTORATIVE SIGNALING: Push pending calls on join
       if (pendingCalls.has(userId)) {
         const callData = pendingCalls.get(userId);
-        
+
         // 🔍 VALIDATION: Only push if caller is STILL ONLINE and call is fresh
         const callerSocketId = onlineUsers.get(callData.from);
         const age = Date.now() - callData.sentAt;
-        
+
         if (callerSocketId && age < 15000) {
           console.log(`📡 Pushing validated pending call to ${userId} (Age: ${age}ms)`);
           io.to(userId).emit("incomingCall", callData);
@@ -176,7 +176,7 @@ export const initSocket = (server) => {
       if (!to || !callId) return;
       const sentAt = Date.now();
       console.log(`📞 Call Request [${callId}]: ${from} -> ${to}`);
-      
+
       const recipientRoom = io.sockets.adapter.rooms.get(to);
       const recipientCount = recipientRoom ? recipientRoom.size : 0;
 
@@ -209,7 +209,7 @@ export const initSocket = (server) => {
     socket.on("acceptCall", ({ to, answer, callId }) => {
       if (!to || !currentUserId || !callId) return;
       console.log(`✅ ACCEPTED [${callId}]: ${currentUserId} -> ${to}`);
-      
+
       pendingCalls.delete(currentUserId);
       activeCalls.set(currentUserId, { to, callId });
       activeCalls.set(to, { to: currentUserId, callId });
@@ -231,10 +231,10 @@ export const initSocket = (server) => {
     socket.on("endCall", ({ to, callId }) => {
       if (!to || !currentUserId) return;
       console.log(`📞 ENDED [${callId}]`);
-      
+
       activeCalls.delete(currentUserId);
       activeCalls.delete(to);
-      
+
       // Cleanup any parked signals regarding these users
       pendingCalls.delete(to);
       pendingCalls.delete(currentUserId);
@@ -287,13 +287,13 @@ export const initSocket = (server) => {
     socket.on("joinClassroom", ({ roomId, userId }) => {
       if (!roomId || !userId) return;
       socket.join(roomId);
-      
+
       // Track presence
       if (!roomPresence.has(roomId)) {
         roomPresence.set(roomId, new Set());
       }
       roomPresence.get(roomId).add(userId);
-      
+
       // Notify room
       io.to(roomId).emit("presenceUpdate", Array.from(roomPresence.get(roomId)));
     });
@@ -301,7 +301,7 @@ export const initSocket = (server) => {
     socket.on("leaveClassroom", ({ roomId, userId }) => {
       if (!roomId || !userId) return;
       socket.leave(roomId);
-      
+
       if (roomPresence.has(roomId)) {
         roomPresence.get(roomId).delete(userId);
         io.to(roomId).emit("presenceUpdate", Array.from(roomPresence.get(roomId)));
@@ -348,8 +348,9 @@ export const initSocket = (server) => {
       if (currentUserId) {
         // 🧹 Cleanup active calls on abrupt disconnect
         if (activeCalls.has(currentUserId)) {
-          const partnerId = activeCalls.get(currentUserId);
-          io.to(partnerId).emit("callEnded");
+          const activeCallData = activeCalls.get(currentUserId);
+          const partnerId = activeCallData.to;
+          io.to(partnerId).emit("callEnded", { callId: activeCallData.callId });
           activeCalls.delete(partnerId);
           activeCalls.delete(currentUserId);
         }
@@ -363,7 +364,7 @@ export const initSocket = (server) => {
         }
 
         onlineUsers.delete(currentUserId);
-        
+
         // Remove from all rooms
         for (let [roomId, presence] of roomPresence.entries()) {
           if (presence.has(currentUserId)) {
