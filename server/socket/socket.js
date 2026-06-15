@@ -326,6 +326,14 @@ export const initSocket = (server) => {
           activeCalls.delete(currentUserId);
         }
 
+        // 🗑️ Cleanup pending calls where this user was the CALLER
+        for (let [recipientId, signalData] of pendingCalls.entries()) {
+          if (signalData.from === currentUserId) {
+            console.log(`🗑️ Removing pending signal to ${recipientId} (Caller disconnected)`);
+            pendingCalls.delete(recipientId);
+          }
+        }
+
         onlineUsers.delete(currentUserId);
 
         // Remove from all rooms

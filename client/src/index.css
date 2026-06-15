@@ -174,4 +174,4 @@ html {
 
 .status.rejected {
   @apply bg-red-500/10 text-red-500 border border-red-500/20;
-}
+}
