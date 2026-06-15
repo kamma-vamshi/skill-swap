@@ -1,6 +1,16 @@
 import axios from "axios";
 
 const getBaseURL = () => {
+  const hostname = window.location.hostname;
+  const isLocal = hostname === "localhost" || 
+                  hostname === "127.0.0.1" || 
+                  hostname.startsWith("192.168.") || 
+                  hostname.startsWith("10.") || 
+                  hostname.startsWith("172.");
+
+  if (isLocal) {
+    return `http://${hostname}:5000/api`;
+  }
   const url = process.env.REACT_APP_API_URL || "https://skill-swap-vuhy.onrender.com/api";
   return url.endsWith("/api") ? url : `${url}/api`;
 };

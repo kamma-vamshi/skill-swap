@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import socket from "../services/socket";
 import toast from "react-hot-toast";
@@ -6,85 +6,76 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { FiPhoneCall, FiX, FiMessageCircle, FiZap, FiPhone } from "react-icons/fi";
 
+import { useSocket } from "../context/SocketContext";
+
 const NotificationManager = ({ children }) => {
   const { userInfo } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { incomingCall, setIncomingCall, ringtone } = useSocket();
 
-  const [incomingCall, setIncomingCall] = useState(null);
-  
-  // Audio Refs
-  const ringtoneRef = useRef(new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_73145465e9.mp3"));
+  const locationRef = useRef(location);
   const pingRef = useRef(new Audio("https://cdn.pixabay.com/audio/2021/08/04/audio_0625c1539c.mp3"));
 
   useEffect(() => {
-    // Setup Audio
-    ringtoneRef.current.loop = true;
-    
+    locationRef.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    console.log("incomingCall state changed", incomingCall);
+  }, [incomingCall]);
+
+  useEffect(() => {
     if (!userInfo?._id) return;
 
-    socket.emit("join", userInfo._id);
-
     // 📩 MESSAGE NOTIFICATION
-    socket.on("receiveMessage", (msg) => {
-      // Don't ping if already in that specific chat
-      const isChattingWithUser = location.pathname === "/chat"; 
-      
-      if (!isChattingWithUser) {
-        pingRef.current.play().catch(e => console.log("Audio play blocked"));
-        toast(`${msg.senderName || "New Message"}: ${msg.text.substring(0, 30)}${msg.text.length > 30 ? '...' : ''}`, {
+    const handleMessage = (msg) => {
+      const isInChat = locationRef.current.pathname === "/chat"; 
+      if (!isInChat) {
+        pingRef.current.play().catch(() => {});
+        toast(`${msg.senderName || "New Message"}: ${msg.text.substring(0, 30)}...`, {
           icon: <FiMessageCircle className="text-purple-500" />,
-          duration: 4000,
           onClick: () => navigate("/chat"),
         });
       }
-    });
+    };
 
     // 🤝 SWAP REQUEST NOTIFICATION
-    socket.on("swap_request", (swap) => {
-      pingRef.current.play().catch(e => console.log("Audio play blocked"));
+    const handleSwapRequest = (swap) => {
+      pingRef.current.play().catch(() => {});
       toast(`New Swap Request from ${swap.senderName || "someone"}!`, {
         icon: <FiZap className="text-yellow-500" />,
-        duration: 5000,
         onClick: () => navigate("/swaps"),
       });
-    });
+    };
 
-    // 📞 GLOBAL INCOMING CALL
-    socket.on("incomingCall", (data) => {
-      // If we're already on the call page, the Call component handles it
-      if (location.pathname === "/call") return;
-
-      setIncomingCall(data);
-      ringtoneRef.current.play().catch(e => console.log("Audio play blocked (interaction required)"));
-    });
-
-    socket.on("callEnded", () => {
-      setIncomingCall(null);
-      ringtoneRef.current.pause();
-      ringtoneRef.current.currentTime = 0;
-    });
+    socket.on("receiveMessage", handleMessage);
+    socket.on("swap_request", handleSwapRequest);
 
     return () => {
-      socket.off("receiveMessage");
-      socket.off("swap_request");
-      socket.off("incomingCall");
-      socket.off("callEnded");
+      socket.off("receiveMessage", handleMessage);
+      socket.off("swap_request", handleSwapRequest);
     };
-  }, [userInfo?._id, location.pathname, navigate]);
+  }, [userInfo?._id, navigate]);
 
   const acceptCall = () => {
-    ringtoneRef.current.pause();
-    ringtoneRef.current.currentTime = 0;
+    ringtone.pause();
+    ringtone.currentTime = 0;
     const callData = incomingCall;
     setIncomingCall(null);
-    navigate("/call", { state: { incomingCallData: callData } });
+    navigate("/call", { 
+      state: { 
+        incomingCallData: callData,
+        selectedUser: { _id: callData.from, name: callData.callerName },
+        autoAccept: true
+      } 
+    });
   };
 
   const rejectCall = () => {
-    ringtoneRef.current.pause();
-    ringtoneRef.current.currentTime = 0;
-    socket.emit("rejectCall", { to: incomingCall.from });
+    ringtone.pause();
+    ringtone.currentTime = 0;
+    socket.emit("rejectCall", { to: incomingCall.from, callId: incomingCall.callId });
     setIncomingCall(null);
   };
 

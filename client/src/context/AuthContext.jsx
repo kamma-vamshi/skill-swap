@@ -14,29 +14,35 @@ export const AuthProvider = ({ children }) => {
   // ================= INIT AUTH =================
   useEffect(() => {
     const initAuth = async () => {
+      console.log("🚀 [AUTH_INIT] Checking session...");
+      const authTimeout = setTimeout(() => {
+        console.warn("⚠️ [AUTH_TIMEOUT] Profile request taking too long, forcing loading to false");
+        setLoading(false);
+      }, 10000);
+
       try {
         const stored = JSON.parse(localStorage.getItem("userInfo"));
 
         if (!stored) {
+          console.log("ℹ️ [AUTH_INIT] No stored session found");
           setLoading(false);
+          clearTimeout(authTimeout);
           return;
         }
 
-        // ✅ FIX: use API not api
+        console.log("📡 [AUTH_INIT] Verifying token with backend...");
         const { data } = await API.get("/users/profile");
 
-        // ✅ Merge profile with stored info (to keep token!)
+        console.log("✅ [AUTH_INIT] Session verified for:", data.name);
         setUserInfo({ ...stored, ...data });
-        
-        // 🔐 Ensure socket is aware of the token
         if (stored.token) updateSocketToken(stored.token);
       } catch (error) {
-        console.log("❌ Token invalid");
-
+        console.error("❌ [AUTH_INIT] Session verification failed:", error.message);
         localStorage.removeItem("userInfo");
         setUserInfo(null);
       } finally {
         setLoading(false);
+        clearTimeout(authTimeout);
       }
     };
 

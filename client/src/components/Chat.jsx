@@ -21,7 +21,6 @@ const Chat = ({ selectedUser, onBack }) => {
   // ================= SOCKET =================
   useEffect(() => {
     if (!userInfo) return;
-    socket.emit("join", userInfo._id);
     socket.on("receiveMessage", (msg) => {
       setMessages((prev) => [...prev, msg]);
     });
@@ -36,7 +35,14 @@ const Chat = ({ selectedUser, onBack }) => {
         prev.map((m) => m.receiver === receiver ? { ...m, status: "seen" } : m)
       );
     });
-    return () => socket.off();
+    return () => {
+      socket.off("receiveMessage");
+      socket.off("messageStatusUpdate");
+      socket.off("typing");
+      socket.off("stopTyping");
+      socket.off("onlineUsers");
+      socket.off("messagesSeen");
+    };
   }, [userInfo]);
 
   // ================= FETCH =================

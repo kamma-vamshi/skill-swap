@@ -1,6 +1,17 @@
 import { io } from "socket.io-client";
 
 const getSocketURL = () => {
+  const hostname = window.location.hostname;
+  const isLocal = hostname === "localhost" || 
+                  hostname === "127.0.0.1" || 
+                  hostname.startsWith("192.168.") || 
+                  hostname.startsWith("10.") || 
+                  hostname.startsWith("172.");
+
+  if (isLocal) {
+    return `http://${hostname}:5000`;
+  }
+
   // Priority 1: Direct socket URL
   if (process.env.REACT_APP_SOCKET_URL) return process.env.REACT_APP_SOCKET_URL;
 
@@ -10,9 +21,7 @@ const getSocketURL = () => {
   }
 
   // Fallback for development
-  return window.location.hostname === "localhost" 
-    ? "http://localhost:5000" 
-    : "https://skill-swap-vuhy.onrender.com";
+  return "https://skill-swap-vuhy.onrender.com";
 };
 
 const getToken = () => {

@@ -17,8 +17,6 @@ const SwapRequests = () => {
   useEffect(() => {
     if (!userInfo?._id) return;
 
-    socket.emit("join", userInfo._id);
-
     socket.on("swap_request", (newSwap) => {
       setSwaps((prev) => [newSwap, ...prev]);
       toast.success("New Swap Request! 📥");

@@ -40,4 +40,8 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
+// Optimize querying tasks for a classroom and for a specific student's homework
+taskSchema.index({ roomId: 1 });
+taskSchema.index({ assignedTo: 1 });
+
 export default mongoose.model("Task", taskSchema);

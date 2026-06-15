@@ -42,7 +42,7 @@ const Navbar = () => {
             className="p-2 md:p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-300 border border-red-500/20"
             title="Logout"
           >
-            <FiLogOut size={18} className="md:size-20" />
+            <FiLogOut className="size-4 md:size-5" />
           </button>
         </div>
       </div>

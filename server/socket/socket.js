@@ -15,6 +15,10 @@ const onlineUsers = new Map();
 const roomPresence = new Map();
 // 📞 Track active calls (userId -> partnerUserId)
 const activeCalls = new Map();
+// ❄️ Buffer ICE candidates until the receiver is ready (callId -> Array<{candidate, to}>)
+const pendingIceCandidates = new Map();
+// ✅ Track calls where the receiver has signaled readiness
+const readyCalls = new Set();
 
 export const initSocket = (server) => {
   io = new Server(server, {
@@ -28,7 +32,7 @@ export const initSocket = (server) => {
   // 🔐 Authentication Middleware (Loosened to allow initial connection)
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
-    
+
     // If no token, allow connection but without .user property
     if (!token) return next();
 
@@ -50,12 +54,29 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("join", (userId) => {
       if (!userId) return;
-      console.log(`👤 User Joined: ${userId} (Socket: ${socket.id})`);
+      console.log(`👤 User Online: ${userId} (Socket: ${socket.id})`);
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
       socket.join(userId);
 
+      // Notify others of online status
       io.emit("onlineUsers", Array.from(onlineUsers.keys()));
+    });
+
+    // 🔐 SECURE ICE CONFIG
+    socket.on("getIceConfigs", () => {
+      const iceServers = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+      ];
+      if (process.env.TURN_URL) {
+        iceServers.push({
+          urls: [`turns:${process.env.TURN_URL}:443?transport=tcp`, `turn:${process.env.TURN_URL}:443`],
+          username: process.env.TURN_USERNAME,
+          credential: process.env.TURN_PASSWORD,
+        });
+      }
+      socket.emit("iceConfigs", { iceServers });
     });
 
     // ===============================
@@ -77,23 +98,9 @@ export const initSocket = (server) => {
     socket.on("sendMessage", async (data) => {
       try {
         const { sender, receiver, text, image } = data;
-
         if (!sender || !receiver || (!text && !image)) return;
-
-        let status = "sent";
-
-        if (onlineUsers.has(receiver)) {
-          status = "delivered";
-        }
-
-        const newMessage = await Message.create({
-          sender,
-          receiver,
-          text,
-          image,
-          status,
-        });
-
+        let status = onlineUsers.has(receiver) ? "delivered" : "sent";
+        const newMessage = await Message.create({ sender, receiver, text, image, status });
         io.to(receiver).emit("receiveMessage", newMessage);
         io.to(sender).emit("messageStatusUpdate", newMessage);
       } catch (err) {
@@ -101,9 +108,6 @@ export const initSocket = (server) => {
       }
     });
 
-    // ===============================
-    // ✍️ TYPING
-    // ===============================
     socket.on("typing", ({ sender, receiver }) => {
       if (!receiver) return;
       io.to(receiver).emit("typing", sender);
@@ -114,64 +118,10 @@ export const initSocket = (server) => {
       io.to(receiver).emit("stopTyping", sender);
     });
 
-    // ===============================
-    // 👁️ SEEN
-    // ===============================
     socket.on("markSeen", async ({ sender, receiver }) => {
       if (!sender || !receiver) return;
-
-      await Message.updateMany(
-        { sender, receiver, status: { $ne: "seen" } },
-        { status: "seen" }
-      );
-
+      await Message.updateMany({ sender, receiver, status: { $ne: "seen" } }, { status: "seen" });
       io.to(sender).emit("messagesSeen", { receiver });
-    });
-
-    // ===============================
-    // 📞 1-TO-1 CALL SIGNALING
-    // ===============================
-    socket.on("callUser", ({ to, from, callerName, offer }) => {
-      if (!to) return;
-      console.log(`📞 Call Attempt: ${from} -> ${to}`);
-      
-      // 🚨 BUSY CHECK
-      if (activeCalls.has(to)) {
-        console.log(`🚫 User ${to} is BUSY`);
-        return io.to(from).emit("callRejected", { reason: "busy" });
-      }
-
-      io.to(to).emit("incomingCall", { from, callerName, offer });
-    });
-
-    socket.on("acceptCall", ({ to, answer }) => {
-      if (!to || !currentUserId) return;
-      console.log(`✅ Call Accepted: ${currentUserId} -> ${to}`);
-      
-      // 🤝 Establish active call mapping
-      activeCalls.set(currentUserId, to);
-      activeCalls.set(to, currentUserId);
-
-      io.to(to).emit("callAccepted", { answer });
-    });
-
-    socket.on("rejectCall", ({ to }) => {
-      if (!to) return;
-      io.to(to).emit("callRejected");
-    });
-
-    socket.on("iceCandidate", ({ to, candidate }) => {
-      if (!to) return;
-      io.to(to).emit("iceCandidate", { candidate });
-    });
-
-    socket.on("endCall", ({ to }) => {
-      if (!to || !currentUserId) return;
-      
-      activeCalls.delete(currentUserId);
-      activeCalls.delete(to);
-
-      io.to(to).emit("callEnded");
     });
 
     // ===============================
@@ -179,20 +129,10 @@ export const initSocket = (server) => {
     // ===============================
     socket.on("joinRoom", ({ roomId, userId }) => {
       if (!roomId) return;
-
       socket.join(roomId);
-
       const room = io.sockets.adapter.rooms.get(roomId) || new Set();
-      const users = Array.from(room);
-
-      // Notify others
-      socket.to(roomId).emit("userJoined", {
-        userId,
-        socketId: socket.id,
-      });
-
-      // Send existing users to new user
-      socket.emit("existingUsers", users);
+      socket.to(roomId).emit("userJoined", { userId, socketId: socket.id });
+      socket.emit("existingUsers", Array.from(room));
     });
 
     socket.on("offer", ({ to, offer }) => {
@@ -207,10 +147,7 @@ export const initSocket = (server) => {
 
     socket.on("iceCandidateRoom", ({ to, candidate }) => {
       if (!to) return;
-      io.to(to).emit("iceCandidateRoom", {
-        candidate,
-        from: socket.id,
-      });
+      io.to(to).emit("iceCandidateRoom", { candidate, from: socket.id });
     });
 
     // ===============================
@@ -219,21 +156,14 @@ export const initSocket = (server) => {
     socket.on("joinClassroom", ({ roomId, userId }) => {
       if (!roomId || !userId) return;
       socket.join(roomId);
-      
-      // Track presence
-      if (!roomPresence.has(roomId)) {
-        roomPresence.set(roomId, new Set());
-      }
+      if (!roomPresence.has(roomId)) roomPresence.set(roomId, new Set());
       roomPresence.get(roomId).add(userId);
-      
-      // Notify room
       io.to(roomId).emit("presenceUpdate", Array.from(roomPresence.get(roomId)));
     });
 
     socket.on("leaveClassroom", ({ roomId, userId }) => {
       if (!roomId || !userId) return;
       socket.leave(roomId);
-      
       if (roomPresence.has(roomId)) {
         roomPresence.get(roomId).delete(userId);
         io.to(roomId).emit("presenceUpdate", Array.from(roomPresence.get(roomId)));
@@ -244,19 +174,8 @@ export const initSocket = (server) => {
       try {
         const { roomId, senderId, message, type, fileUrl } = data;
         if (!roomId || !senderId || !message) return;
-
-        const newMessage = await RoomMessage.create({
-          roomId,
-          senderId,
-          message,
-          type: type || "text",
-          fileUrl,
-        });
-
-        const populated = await RoomMessage.findById(newMessage._id)
-          .populate("senderId", "name profilePic");
-
-        // Emit to everyone in the room
+        const newMessage = await RoomMessage.create({ roomId, senderId, message, type: type || "text", fileUrl });
+        const populated = await RoomMessage.findById(newMessage._id).populate("senderId", "name profilePic");
         io.to(roomId).emit("receiveRoomMessage", populated);
       } catch (err) {
         console.error("❌ Room Message Error:", err.message);
@@ -274,20 +193,141 @@ export const initSocket = (server) => {
     });
 
     // ===============================
+    // 📞 1-TO-1 CALL SIGNALING (Overhauled)
+    // ===============================
+    socket.on("callUser", ({ to, from, callerName, offer, callId }) => {
+      if (!to || !callId) return;
+      
+      console.log(`\n📞 [CALL_INIT] ${callId}: ${from} -> ${to}`);
+
+      // 1. Check if recipient is in their private room
+      const recipientRoom = io.sockets.adapter.rooms.get(to);
+      const isOnline = recipientRoom && recipientRoom.size > 0;
+
+      if (!isOnline) {
+        console.log(`❌ [CALL_FAILED] Recipient ${to} is offline`);
+        return io.to(socket.id).emit("callRejected", { callId, reason: "offline" });
+      }
+
+      // 2. Check if recipient is busy
+      if (activeCalls.has(to)) {
+        console.log(`🚫 [CALL_FAILED] Recipient ${to} is busy`);
+        return io.to(socket.id).emit("callRejected", { callId, reason: "busy" });
+      }
+
+      // 3. Initialize ICE candidate buffer for this call
+      pendingIceCandidates.set(callId, []);
+      readyCalls.delete(callId); // Ensure clean state
+      console.log(`❄️ [ICE_BUFFER] Initialized buffer for call ${callId}`);
+
+      // 4. Dispatch Instant Signal
+      console.log(`🚀 [CALL_DISPATCH] Sending incomingCall to ${to}`);
+      io.to(to).emit("incomingCall", { from, callerName, offer, callId, sentAt: Date.now() });
+      
+      // Notify caller that we are trying to reach them
+      io.to(socket.id).emit("callWaiting", { callId });
+    });
+
+    socket.on("callAcknowledge", ({ to, callId }) => {
+      if (!to || !callId) return;
+      console.log(`🔔 [CALL_ACK] ${callId} acknowledged by recipient`);
+      io.to(to).emit("callRinging", { callId });
+    });
+
+    socket.on("acceptCall", ({ to, answer, callId }) => {
+      if (!to || !callId) return;
+      console.log(`✅ [CALL_ACCEPT] ${callId}: User accepted`);
+
+      activeCalls.set(currentUserId, { to, callId });
+      activeCalls.set(to, { to: currentUserId, callId });
+
+      io.to(to).emit("callAccepted", { answer, callId });
+    });
+
+    // 📞 Receiver signals they are ready to receive ICE candidates
+    socket.on("callReady", ({ callId, to }) => {
+      if (!callId) return;
+      console.log(`🟢 [CALL_READY] ${callId}: Receiver is ready, flushing ICE buffer`);
+
+      // Mark this call as ready so future candidates forward directly
+      readyCalls.add(callId);
+
+      // Flush all buffered ICE candidates to the receiver
+      const buffered = pendingIceCandidates.get(callId) || [];
+      console.log(`❄️ [ICE_FLUSH] Sending ${buffered.length} buffered candidates for ${callId}`);
+      for (const entry of buffered) {
+        io.to(entry.to).emit("iceCandidate", { candidate: entry.candidate, callId });
+      }
+      pendingIceCandidates.delete(callId);
+
+      // Also notify the caller so they know receiver is processing
+      if (to) {
+        io.to(to).emit("callReady", { callId });
+      }
+    });
+
+    socket.on("rejectCall", ({ to, callId }) => {
+      if (!to || !callId) return;
+      console.log(`🚫 [CALL_REJECT] ${callId}`);
+      // Clean up ICE buffers
+      pendingIceCandidates.delete(callId);
+      readyCalls.delete(callId);
+      io.to(to).emit("callRejected", { callId, reason: "rejected" });
+    });
+
+    socket.on("iceCandidate", ({ to, candidate, callId }) => {
+      if (!to || !callId) return;
+
+      // If receiver has signaled ready OR buffer doesn't exist, forward directly
+      if (readyCalls.has(callId) || !pendingIceCandidates.has(callId)) {
+        console.log(`❄️ [ICE_FORWARD] Forwarding candidate for ${callId} to ${to}`);
+        io.to(to).emit("iceCandidate", { candidate, callId });
+      } else {
+        // Buffer the candidate until the receiver is ready
+        pendingIceCandidates.get(callId).push({ candidate, to });
+        console.log(`❄️ [ICE_BUFFER] Buffered candidate for ${callId} (total: ${pendingIceCandidates.get(callId).length})`);
+      }
+    });
+
+    socket.on("endCall", ({ to, callId }) => {
+      if (!to) return;
+      console.log(`🏁 [CALL_END] ${callId}`);
+
+      activeCalls.delete(currentUserId);
+      activeCalls.delete(to);
+
+      // Clean up ICE buffers
+      if (callId) {
+        pendingIceCandidates.delete(callId);
+        readyCalls.delete(callId);
+      }
+
+      io.to(to).emit("callEnded", { callId });
+    });
+
+
+
+    // ===============================
     // ❌ DISCONNECT
     // ===============================
     socket.on("disconnect", () => {
       if (currentUserId) {
         // 🧹 Cleanup active calls on abrupt disconnect
         if (activeCalls.has(currentUserId)) {
-          const partnerId = activeCalls.get(currentUserId);
-          io.to(partnerId).emit("callEnded");
+          const activeCallData = activeCalls.get(currentUserId);
+          const partnerId = activeCallData.to;
+          io.to(partnerId).emit("callEnded", { callId: activeCallData.callId });
+
+          // Clean up ICE buffers for this call
+          pendingIceCandidates.delete(activeCallData.callId);
+          readyCalls.delete(activeCallData.callId);
+
           activeCalls.delete(partnerId);
           activeCalls.delete(currentUserId);
         }
 
         onlineUsers.delete(currentUserId);
-        
+
         // Remove from all rooms
         for (let [roomId, presence] of roomPresence.entries()) {
           if (presence.has(currentUserId)) {
